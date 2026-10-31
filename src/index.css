@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --flux-bg: #FAFAFA;
+  --flux-surface: #FFFFFF;
+  --flux-surface-subtle: #F5F5F7;
+  --flux-border: #EAEAEA;
+  --flux-border-strong: #D4D4D8;
+  --flux-primary: #171717;
+  --flux-secondary: #737373;
+}
+
+.dark {
+  --flux-bg: #0D0D0D;
+  --flux-surface: #171717;
+  --flux-surface-subtle: #1F1F1F;
+  --flux-border: #262626;
+  --flux-border-strong: #3F3F46;
+  --flux-primary: #EDEDED;
+  --flux-secondary: #A3A3A3;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  background-color: var(--flux-bg);
+  color: var(--flux-primary);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* iOS Safe Area Padding Utilities */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Custom Minimal Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--flux-border-strong);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--flux-secondary);
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--flux-border);
+}
+
+.dark .glass-panel {
+  background: rgba(23, 23, 23, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--flux-border);
+}
+
+/* Animation utilities */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

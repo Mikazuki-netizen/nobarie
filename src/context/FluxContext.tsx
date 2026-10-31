@@ -1,0 +1,696 @@
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import {
+  FluxScreen,
+  DeviceInfo,
+  FileItem,
+  SessionState,
+  TransferStats,
+  HistoryRecord,
+  AppSettings,
+} from '../types/flux';
+import { detectDevice } from '../utils/device';
+import { sounds } from '../utils/audio';
+import { signaling } from '../services/signaling';
+import { webrtc } from '../services/webrtc';
+import { relay } from '../services/relay';
+import { getApiEndpoint } from '../utils/api';
+import confetti from 'canvas-confetti';
+
+interface FluxContextType {
+  screen: FluxScreen;
+  setScreen: (screen: FluxScreen) => void;
+  device: DeviceInfo;
+  updateDeviceName: (name: string) => void;
+  session: SessionState;
+  selectedFiles: FileItem[];
+  incomingFiles: FileItem[];
+  transferredFiles: FileItem[];
+  transferStats: TransferStats;
+  history: HistoryRecord[];
+  settings: AppSettings;
+  updateSettings: (partial: Partial<AppSettings>) => void;
+  errorMessage: string | null;
+  setErrorMessage: (msg: string | null) => void;
+  networkInfo: { localIp?: string; clientPort?: number };
+  
+  // Actions
+  addFiles: (files: FileList | File[]) => Promise<void>;
+  removeFile: (id: string) => void;
+  clearSelectedFiles: () => void;
+  createReceiveSession: () => Promise<void>;
+  connectToSession: (sessionId: string, token: string) => Promise<void>;
+  connectWithCode: (shortCode: string) => Promise<void>;
+  startTransfer: () => Promise<void>;
+  acceptIncomingTransfer: () => Promise<void>;
+  rejectIncomingTransfer: () => void;
+  cancelActiveTransfer: (reason?: string) => void;
+  resetTransferState: () => void;
+  clearHistory: () => void;
+  switchRelayMode: (reason?: string) => void;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  deviceName: '',
+  autoAccept: false,
+  theme: 'system',
+  preferRelay: false,
+  audioFeedback: true,
+  hapticFeedback: true,
+};
+
+const INITIAL_STATS: TransferStats = {
+  speed: 0,
+  transferredBytes: 0,
+  totalBytes: 0,
+  percent: 0,
+  etaSeconds: 0,
+  currentFileName: '',
+  currentFileIndex: 0,
+  totalFiles: 0,
+  mode: 'p2p',
+};
+
+const INITIAL_SESSION: SessionState = {
+  sessionId: '',
+  token: '',
+  shortCode: '',
+  expiresAt: 0,
+  role: null,
+  connected: false,
+  peerDevice: null,
+  mode: 'p2p',
+};
+
+const FluxContext = createContext<FluxContextType | undefined>(undefined);
+
+export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [screen, setScreen] = useState<FluxScreen>('home');
+  const [device, setDevice] = useState<DeviceInfo>(detectDevice());
+  const [session, setSession] = useState<SessionState>(INITIAL_SESSION);
+  const [selectedFiles, setSelectedFiles] = useState<FileItem[]>([]);
+  const [incomingFiles, setIncomingFiles] = useState<FileItem[]>([]);
+  const [transferredFiles, setTransferredFiles] = useState<FileItem[]>([]);
+  const [transferStats, setTransferStats] = useState<TransferStats>(INITIAL_STATS);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [networkInfo, setNetworkInfo] = useState<{ localIp?: string; clientPort?: number }>({});
+
+  const isTransferringRef = useRef(false);
+
+  // Settings state persisted in localStorage
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    try {
+      const stored = localStorage.getItem('flux_settings');
+      if (stored) {
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+      }
+    } catch {
+      // Ignore
+    }
+    return DEFAULT_SETTINGS;
+  });
+
+  // History state persisted in localStorage
+  const [history, setHistory] = useState<HistoryRecord[]>(() => {
+    try {
+      const stored = localStorage.getItem('flux_history');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {
+      // Ignore
+    }
+    return [];
+  });
+
+  // Fetch server info on mount
+  useEffect(() => {
+    fetch(getApiEndpoint('/api/info'))
+      .then((res) => res.json())
+      .then((data) => {
+        setNetworkInfo({
+          localIp: data.localIp,
+          clientPort: data.clientPort,
+        });
+      })
+      .catch(() => {
+        // Fallback
+      });
+  }, []);
+
+  // Theme synchronization
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.theme === 'dark') {
+      root.classList.add('dark');
+    } else if (settings.theme === 'light') {
+      root.classList.remove('dark');
+    } else {
+      // System mode
+      if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        root.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+      }
+    }
+  }, [settings.theme]);
+
+  // Persist settings
+  const updateSettings = useCallback((partial: Partial<AppSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...partial };
+      localStorage.setItem('flux_settings', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const updateDeviceName = useCallback((name: string) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    localStorage.setItem('flux_device_name', cleanName);
+    setDevice((prev) => ({ ...prev, name: cleanName }));
+    updateSettings({ deviceName: cleanName });
+  }, [updateSettings]);
+
+  // Add files to sender queue
+  const addFiles = useCallback(async (files: FileList | File[]) => {
+    const newItems: FileItem[] = [];
+    const arrayFiles = Array.from(files);
+
+    for (const file of arrayFiles) {
+      let previewUrl: string | undefined;
+      if (file.type.startsWith('image/')) {
+        previewUrl = URL.createObjectURL(file);
+      }
+
+      newItems.push({
+        id: crypto.randomUUID(),
+        file,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        previewUrl,
+        progress: 0,
+        status: 'pending',
+      });
+    }
+
+    setSelectedFiles((prev) => [...prev, ...newItems]);
+  }, []);
+
+  const removeFile = useCallback((id: string) => {
+    setSelectedFiles((prev) => {
+      const target = prev.find((f) => f.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((f) => f.id !== id);
+    });
+  }, []);
+
+  const clearSelectedFiles = useCallback(() => {
+    selectedFiles.forEach((f) => {
+      if (f.previewUrl) URL.revokeObjectURL(f.previewUrl);
+    });
+    setSelectedFiles([]);
+  }, [selectedFiles]);
+
+  const addHistoryRecord = useCallback((record: HistoryRecord) => {
+    setHistory((prev) => {
+      const next = [record, ...prev].slice(0, 50); // Keep last 50
+      localStorage.setItem('flux_history', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    localStorage.removeItem('flux_history');
+  }, []);
+
+  // WebRTC Signal forwarding listener setup
+  useEffect(() => {
+    const onSignal = async ({ signal }: { from: 'sender' | 'receiver'; signal: any }) => {
+      if (signal.candidate) {
+        await webrtc.addIceCandidate(signal.candidate);
+      } else if (signal.sdp) {
+        if (signal.sdp.type === 'offer') {
+          const answer = await webrtc.handleOffer(signal.sdp);
+          signaling.sendSignal({ sdp: answer });
+        } else if (signal.sdp.type === 'answer') {
+          await webrtc.handleAnswer(signal.sdp);
+        }
+      }
+    };
+
+    const onPeerJoined = ({ role, device: peerDev }: { role: 'sender' | 'receiver'; device?: DeviceInfo }) => {
+      setSession((prev) => ({
+        ...prev,
+        connected: true,
+        peerDevice: peerDev || null,
+      }));
+      sounds.playConnect();
+
+      // If this client is sender, initiate WebRTC offer
+      if (session.role === 'sender') {
+        webrtc.init('sender');
+        webrtc.createOffer().then((offer) => {
+          signaling.sendSignal({ sdp: offer });
+        }).catch((err) => {
+          console.error('[WebRTC] Failed to create offer:', err);
+        });
+      }
+    };
+
+    const onPeerDisconnected = () => {
+      setSession((prev) => ({
+        ...prev,
+        connected: false,
+        peerDevice: null,
+      }));
+    };
+
+    const onOfferFiles = ({ files, senderDevice }: { files: any[]; senderDevice?: DeviceInfo }) => {
+      setSession((prev) => ({
+        ...prev,
+        peerDevice: senderDevice || prev.peerDevice,
+      }));
+
+      const mappedFiles: FileItem[] = files.map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        sha256: f.sha256,
+        progress: 0,
+        status: 'pending',
+      }));
+
+      setIncomingFiles(mappedFiles);
+
+      if (settings.autoAccept) {
+        // Auto accept if configured
+        sounds.playStart();
+        signaling.approveFiles(true);
+        isTransferringRef.current = true;
+        setScreen('transferring');
+      } else {
+        sounds.playConnect();
+        setScreen('incoming');
+      }
+    };
+
+    const onApproveFiles = async ({ approved }: { approved: boolean }) => {
+      if (!approved) {
+        sounds.playError();
+        setErrorMessage('Transfer was declined by receiver.');
+        setScreen('send');
+        return;
+      }
+
+      // Approved! Start sending files
+      sounds.playStart();
+      isTransferringRef.current = true;
+      setScreen('transferring');
+
+      if (session.mode === 'relay' || settings.preferRelay) {
+        // Relay transfer
+        try {
+          await relay.uploadFiles(
+            session.sessionId,
+            session.token,
+            selectedFiles,
+            (payload) => {
+              setTransferStats(payload.stats);
+              signaling.notifyProgress(payload);
+            }
+          );
+          sounds.playComplete();
+          confetti({ particleCount: 75, spread: 60, origin: { y: 0.7 } });
+          setTransferredFiles(selectedFiles);
+          setScreen('complete');
+          addHistoryRecord({
+            id: crypto.randomUUID(),
+            timestamp: Date.now(),
+            direction: 'sent',
+            files: selectedFiles.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+            totalSize: selectedFiles.reduce((acc, f) => acc + f.size, 0),
+            peerName: session.peerDevice?.name || 'Receiver',
+            status: 'completed',
+            mode: 'relay',
+          });
+        } catch (e: any) {
+          sounds.playError();
+          setErrorMessage(e.message || 'Relay transfer failed.');
+          setScreen('send');
+        }
+      } else {
+        // Direct WebRTC P2P transfer
+        try {
+          await webrtc.sendFiles(selectedFiles);
+          sounds.playComplete();
+          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+          setTransferredFiles(selectedFiles);
+          setScreen('complete');
+          addHistoryRecord({
+            id: crypto.randomUUID(),
+            timestamp: Date.now(),
+            direction: 'sent',
+            files: selectedFiles.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+            totalSize: selectedFiles.reduce((acc, f) => acc + f.size, 0),
+            peerName: session.peerDevice?.name || 'Receiver',
+            status: 'completed',
+            mode: 'p2p',
+          });
+        } catch (e: any) {
+          console.warn('[WebRTC] P2P transfer failed, attempting relay fallback:', e);
+          switchRelayMode('P2P data channel disrupted. Switching to Relay.');
+        }
+      }
+    };
+
+    const onRelayModeTrigger = ({ reason }: { reason: string }) => {
+      setSession((prev) => ({ ...prev, mode: 'relay' }));
+      setTransferStats((prev) => ({ ...prev, mode: 'relay' }));
+      console.log('[Relay Fallback Triggered]:', reason);
+    };
+
+    const onRelayFileReady = async ({ file }: { file: any }) => {
+      // Receiver downloads relay file
+      try {
+        const received = await relay.downloadFile(file.downloadUrl, file, (payload) => {
+          setTransferStats(payload.stats);
+        });
+
+        setTransferredFiles((prev) => [...prev, received]);
+        sounds.playComplete();
+        confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+        setScreen('complete');
+        addHistoryRecord({
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          direction: 'received',
+          files: [{ name: received.name, size: received.size, type: received.type }],
+          totalSize: received.size,
+          peerName: session.peerDevice?.name || 'Sender',
+          status: 'completed',
+          mode: 'relay',
+        });
+      } catch (err: any) {
+        sounds.playError();
+        setErrorMessage(err.message || 'Relay download failed.');
+      }
+    };
+
+    const onTransferProgress = (data: any) => {
+      if (data.stats) {
+        setTransferStats(data.stats);
+      }
+    };
+
+    const onTransferComplete = () => {
+      sounds.playComplete();
+      confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+      setScreen('complete');
+    };
+
+    const onTransferCancelled = ({ reason }: { reason: string }) => {
+      sounds.playError();
+      setErrorMessage(reason || 'Transfer cancelled by peer.');
+      setScreen('home');
+    };
+
+    const onError = ({ message }: { message: string }) => {
+      sounds.playError();
+      setErrorMessage(message);
+    };
+
+    // Attach signaling listeners
+    signaling.on('signal', onSignal);
+    signaling.on('peerJoined', onPeerJoined);
+    signaling.on('peerDisconnected', onPeerDisconnected);
+    signaling.on('offerFiles', onOfferFiles);
+    signaling.on('approveFiles', onApproveFiles);
+    signaling.on('relayModeTrigger', onRelayModeTrigger);
+    signaling.on('relayFileReady', onRelayFileReady);
+    signaling.on('transferProgress', onTransferProgress);
+    signaling.on('transferComplete', onTransferComplete);
+    signaling.on('transferCancelled', onTransferCancelled);
+    signaling.on('error', onError);
+
+    // WebRTC events
+    const onWebrtcFallback = (reason: string) => {
+      switchRelayMode(reason);
+    };
+
+    const onWebrtcFileReceived = (file: FileItem) => {
+      setTransferredFiles((prev) => [...prev, file]);
+    };
+
+    const onWebrtcProgress = (payload: { fileId: string; stats: TransferStats }) => {
+      setTransferStats(payload.stats);
+    };
+
+    const onWebrtcComplete = () => {
+      sounds.playComplete();
+      confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+      setScreen('complete');
+      addHistoryRecord({
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        direction: 'received',
+        files: incomingFiles.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+        totalSize: incomingFiles.reduce((acc, f) => acc + f.size, 0),
+        peerName: session.peerDevice?.name || 'Sender',
+        status: 'completed',
+        mode: 'p2p',
+      });
+    };
+
+    webrtc.on('fallbackToRelay', onWebrtcFallback);
+    webrtc.on('fileReceived', onWebrtcFileReceived);
+    webrtc.on('progress', onWebrtcProgress);
+    webrtc.on('transferComplete', onWebrtcComplete);
+
+    return () => {
+      signaling.off('signal', onSignal);
+      signaling.off('peerJoined', onPeerJoined);
+      signaling.off('peerDisconnected', onPeerDisconnected);
+      signaling.off('offerFiles', onOfferFiles);
+      signaling.off('approveFiles', onApproveFiles);
+      signaling.off('relayModeTrigger', onRelayModeTrigger);
+      signaling.off('relayFileReady', onRelayFileReady);
+      signaling.off('transferProgress', onTransferProgress);
+      signaling.off('transferComplete', onTransferComplete);
+      signaling.off('transferCancelled', onTransferCancelled);
+      signaling.off('error', onError);
+
+      webrtc.off('fallbackToRelay', onWebrtcFallback);
+      webrtc.off('fileReceived', onWebrtcFileReceived);
+      webrtc.off('progress', onWebrtcProgress);
+      webrtc.off('transferComplete', onWebrtcComplete);
+    };
+  }, [session, selectedFiles, incomingFiles, settings, addHistoryRecord]);
+
+  const switchRelayMode = useCallback((reason?: string) => {
+    setSession((prev) => ({ ...prev, mode: 'relay' }));
+    setTransferStats((prev) => ({ ...prev, mode: 'relay' }));
+    signaling.triggerRelay(reason || 'Switching to relay mode');
+  }, []);
+
+  // Create Receiver Session
+  const createReceiveSession = useCallback(async () => {
+    try {
+      setErrorMessage(null);
+      const res = await fetch(getApiEndpoint('/api/session/create'), { method: 'POST' });
+      if (!res.ok) throw new Error('Could not create transfer session');
+      const data = await res.json();
+
+      setSession({
+        sessionId: data.sessionId,
+        token: data.token,
+        shortCode: data.shortCode,
+        expiresAt: data.expiresAt,
+        role: 'receiver',
+        connected: false,
+        peerDevice: null,
+        mode: 'p2p',
+      });
+
+      await signaling.connect();
+      signaling.registerReceiver(data.sessionId, data.token, device);
+      webrtc.init('receiver');
+
+      setScreen('receive');
+    } catch (err: any) {
+      sounds.playError();
+      setErrorMessage(err.message || 'Failed to start receive session');
+    }
+  }, [device]);
+
+  // Connect as Sender to an existing session
+  const connectToSession = useCallback(async (sessionId: string, token: string) => {
+    try {
+      setErrorMessage(null);
+      await signaling.connect();
+      signaling.connectSender({
+        sessionId,
+        token,
+        device,
+      });
+
+      setSession((prev) => ({
+        ...prev,
+        sessionId,
+        token,
+        role: 'sender',
+        mode: 'p2p',
+      }));
+
+      sounds.playConnect();
+    } catch (err: any) {
+      sounds.playError();
+      setErrorMessage(err.message || 'Could not connect to receiver');
+    }
+  }, [device]);
+
+  // Connect with 6-digit code
+  const connectWithCode = useCallback(async (shortCode: string) => {
+    try {
+      setErrorMessage(null);
+      const res = await fetch(getApiEndpoint('/api/session/lookup'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: shortCode }),
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Pairing code not found');
+      }
+      const data = await res.json();
+      await connectToSession(data.sessionId, data.token);
+    } catch (err: any) {
+      sounds.playError();
+      setErrorMessage(err.message || 'Invalid pairing code');
+    }
+  }, [connectToSession]);
+
+  // Start Transfer (Sender sends manifest to Receiver)
+  const startTransfer = useCallback(async () => {
+    if (selectedFiles.length === 0) {
+      setErrorMessage('Please select at least one file to transfer.');
+      return;
+    }
+
+    const manifest = selectedFiles.map((f) => ({
+      id: f.id,
+      name: f.name,
+      size: f.size,
+      type: f.type,
+      sha256: f.sha256,
+    }));
+
+    signaling.offerFiles(manifest);
+  }, [selectedFiles]);
+
+  const acceptIncomingTransfer = useCallback(async () => {
+    signaling.approveFiles(true);
+    isTransferringRef.current = true;
+    setScreen('transferring');
+  }, []);
+
+  const rejectIncomingTransfer = useCallback(() => {
+    signaling.approveFiles(false);
+    setIncomingFiles([]);
+    setScreen('home');
+  }, []);
+
+  const cancelActiveTransfer = useCallback((reason = 'User cancelled transfer') => {
+    if (session.role === 'sender') {
+      webrtc.cancel(reason);
+      relay.cancel();
+      signaling.cancelTransfer(reason);
+    } else {
+      signaling.cancelTransfer(reason);
+    }
+    isTransferringRef.current = false;
+    sounds.playError();
+    setScreen('home');
+  }, [session.role]);
+
+  const resetTransferState = useCallback(() => {
+    clearSelectedFiles();
+    setIncomingFiles([]);
+    setTransferredFiles([]);
+    setTransferStats(INITIAL_STATS);
+    setSession(INITIAL_SESSION);
+    webrtc.close();
+    signaling.disconnect();
+    setScreen('home');
+  }, [clearSelectedFiles]);
+
+  // Deep-link auto-connect (?sid=...&token=... or ?code=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get('sid');
+    const tok = params.get('token');
+    const code = params.get('code');
+
+    if (sid && tok) {
+      // Clean query parameters from URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      connectToSession(sid, tok).then(() => {
+        setScreen('send');
+      });
+    } else if (code) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      connectWithCode(code).then(() => {
+        setScreen('send');
+      });
+    }
+  }, [connectToSession, connectWithCode]);
+
+  return (
+    <FluxContext.Provider
+      value={{
+        screen,
+        setScreen,
+        device,
+        updateDeviceName,
+        session,
+        selectedFiles,
+        incomingFiles,
+        transferredFiles,
+        transferStats,
+        history,
+        settings,
+        updateSettings,
+        errorMessage,
+        setErrorMessage,
+        networkInfo,
+        addFiles,
+        removeFile,
+        clearSelectedFiles,
+        createReceiveSession,
+        connectToSession,
+        connectWithCode,
+        startTransfer,
+        acceptIncomingTransfer,
+        rejectIncomingTransfer,
+        cancelActiveTransfer,
+        resetTransferState,
+        clearHistory,
+        switchRelayMode,
+      }}
+    >
+      {children}
+    </FluxContext.Provider>
+  );
+};
+
+export const useFlux = () => {
+  const ctx = useContext(FluxContext);
+  if (!ctx) {
+    throw new Error('useFlux must be used within FluxProvider');
+  }
+  return ctx;
+};

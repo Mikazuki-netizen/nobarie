@@ -1,0 +1,206 @@
+import React, { useState } from 'react';
+import { useFlux } from '../context/FluxContext';
+import JSZip from 'jszip';
+import {
+  CheckCircle2,
+  Download,
+  ShieldCheck,
+  RotateCcw,
+  Home,
+  Archive,
+  ExternalLink,
+  Image as ImageIcon,
+  Video,
+  FileText,
+  Music,
+  Files,
+} from 'lucide-react';
+import { formatBytes, getFileCategory } from '../utils/format';
+
+export const TransferCompleteScreen: React.FC = () => {
+  const { session, transferredFiles, resetTransferState, setScreen } = useFlux();
+  const [isZipping, setIsZipping] = useState(false);
+
+  const isReceiver = session.role === 'receiver';
+  const totalSize = transferredFiles.reduce((acc, f) => acc + f.size, 0);
+
+  const renderIconForCategory = (cat: string) => {
+    switch (cat) {
+      case 'Photos':
+        return <ImageIcon className="w-5 h-5 text-purple-500" />;
+      case 'Videos':
+        return <Video className="w-5 h-5 text-blue-500" />;
+      case 'Documents':
+        return <FileText className="w-5 h-5 text-amber-500" />;
+      case 'Audio':
+        return <Music className="w-5 h-5 text-rose-500" />;
+      default:
+        return <Files className="w-5 h-5 text-gray-500" />;
+    }
+  };
+
+  const handleDownloadAllZip = async () => {
+    if (transferredFiles.length === 0) return;
+    setIsZipping(true);
+
+    try {
+      const zip = new JSZip();
+
+      for (const item of transferredFiles) {
+        if (item.blob) {
+          zip.file(item.name, item.blob);
+        } else if (item.file) {
+          zip.file(item.name, item.file);
+        }
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const zipUrl = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = zipUrl;
+      link.download = `flux-transfer-${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(zipUrl), 5000);
+    } catch (e) {
+      console.error('Error creating ZIP archive:', e);
+    } finally {
+      setIsZipping(false);
+    }
+  };
+
+  const handleDownloadSingle = (item: any) => {
+    if (item.downloadUrl) {
+      const link = document.createElement('a');
+      link.href = item.downloadUrl;
+      link.download = item.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+  return (
+    <div className="w-full max-w-md mx-auto px-4 py-8 flex flex-col items-center animate-fade-in">
+      <div className="w-full p-6 sm:p-8 rounded-3xl bg-flux-surface border border-flux-border shadow-elevated flex flex-col items-center">
+        {/* Success Icon */}
+        <div className="w-16 h-16 rounded-3xl bg-emerald-50 dark:bg-emerald-950/40 text-flux-success flex items-center justify-center mb-4 shadow-subtle">
+          <CheckCircle2 className="w-9 h-9 stroke-[2.5]" />
+        </div>
+
+        {/* Title */}
+        <h1 className="text-2xl font-bold tracking-tight text-flux-primary mb-1">
+          Transfer complete!
+        </h1>
+        <p className="text-xs sm:text-sm text-flux-secondary text-center mb-6">
+          {isReceiver
+            ? 'Your files are ready to be saved to this device.'
+            : 'All files were successfully delivered and verified.'}
+        </p>
+
+        {/* Summary Pill */}
+        <div className="w-full p-3.5 rounded-2xl bg-flux-surface-subtle border border-flux-border flex items-center justify-between text-xs text-flux-secondary mb-6">
+          <div className="flex items-center space-x-2">
+            <ShieldCheck className="w-4 h-4 text-flux-success" />
+            <span className="font-semibold text-flux-primary">SHA-256 Verified</span>
+          </div>
+          <span>
+            {transferredFiles.length} {transferredFiles.length === 1 ? 'file' : 'files'} •{' '}
+            {formatBytes(totalSize)}
+          </span>
+        </div>
+
+        {/* Transferred Files List */}
+        <div className="w-full space-y-2.5 max-h-[260px] overflow-y-auto pr-1 mb-6">
+          {transferredFiles.map((file) => {
+            const cat = getFileCategory(file.type, file.name);
+            return (
+              <div
+                key={file.id}
+                className="p-3 rounded-2xl bg-flux-surface border border-flux-border flex items-center justify-between group hover:border-flux-accent/40 transition-colors"
+              >
+                <div className="flex items-center space-x-3 truncate">
+                  <div className="w-9 h-9 rounded-xl bg-flux-surface-subtle border border-flux-border flex items-center justify-center shrink-0">
+                    {renderIconForCategory(cat)}
+                  </div>
+                  <div className="truncate">
+                    <div className="text-xs font-semibold text-flux-primary truncate">
+                      {file.name}
+                    </div>
+                    <div className="text-[11px] text-flux-secondary">
+                      {formatBytes(file.size)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Receiver Download Button */}
+                {isReceiver && file.downloadUrl && (
+                  <div className="flex items-center space-x-1 shrink-0 ml-2">
+                    <button
+                      onClick={() => handleDownloadSingle(file)}
+                      className="p-2 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent transition-colors text-xs font-semibold flex items-center space-x-1"
+                      title="Save file"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Save</span>
+                    </button>
+                    {/* For images / videos on iOS Safari: open in tab for long-press 'Save to Photos' */}
+                    {['Photos', 'Videos'].includes(cat) && (
+                      <a
+                        href={file.downloadUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 rounded-xl bg-flux-surface-subtle text-flux-secondary hover:text-flux-primary transition-colors"
+                        title="Preview in new tab"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* If multiple files received: Download All ZIP button */}
+        {isReceiver && transferredFiles.length > 1 && (
+          <button
+            onClick={handleDownloadAllZip}
+            disabled={isZipping}
+            className="w-full py-3.5 px-4 rounded-2xl bg-flux-primary text-flux-surface hover:bg-flux-accent text-xs font-semibold flex items-center justify-center space-x-2 transition-all active:scale-95 mb-3 shadow-subtle"
+          >
+            <Archive className="w-4 h-4" />
+            <span>{isZipping ? 'Creating ZIP...' : 'Download All as ZIP Archive'}</span>
+          </button>
+        )}
+
+        {/* Navigation Action Buttons */}
+        <div className="grid grid-cols-2 gap-3 w-full">
+          <button
+            onClick={() => {
+              if (session.role === 'sender') {
+                setScreen('send');
+              } else {
+                setScreen('receive');
+              }
+            }}
+            className="py-3 px-4 rounded-2xl bg-flux-surface-subtle border border-flux-border hover:bg-flux-border text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors active:scale-95"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Transfer More</span>
+          </button>
+
+          <button
+            onClick={resetTransferState}
+            className="py-3 px-4 rounded-2xl bg-flux-surface-subtle border border-flux-border hover:bg-flux-border text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors active:scale-95"
+          >
+            <Home className="w-4 h-4" />
+            <span>Return Home</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
