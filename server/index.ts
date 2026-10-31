@@ -204,6 +204,19 @@ app.get('/api/discovery/peers', (req, res) => {
   res.json({ peers });
 });
 
+app.get(['/download/apk', '/api/apk'], (_req, res) => {
+  const rootApk = path.resolve('NoBarier.apk');
+  const buildApk = path.resolve('android/app/build/outputs/apk/debug/app-debug.apk');
+  const targetPath = fs.existsSync(rootApk) ? rootApk : buildApk;
+
+  if (fs.existsSync(targetPath)) {
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.download(targetPath, 'NoBarier.apk');
+  } else {
+    res.status(404).json({ error: 'File APK belum dibuat.' });
+  }
+});
+
 app.post('/api/session/create', (_req, res) => {
   const sessionId = crypto.randomUUID();
   const token = crypto.randomBytes(8).toString('hex');

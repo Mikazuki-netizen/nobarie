@@ -9,7 +9,10 @@
     "build": "vite build",
     "start": "tsx server/index.ts",
     "ios": "open ios/App/App.xcodeproj",
-    "ios:sync": "npm run build && npx cap sync ios"
+    "ios:sync": "npm run build && npx cap sync ios",
+    "android:open": "npx cap open android",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:build": "export JAVA_HOME=$HOME/.jdks/jdk-21.0.13+9/Contents/Home && npm run build && npx cap sync android && cd android && ./gradlew assembleDebug && cd .. && cp android/app/build/outputs/apk/debug/app-debug.apk NoBarier.apk && cp NoBarier.apk public/NoBarier.apk"
   },
   "dependencies": {
     "@capacitor/core": "^8.6.0",
@@ -27,6 +30,7 @@
     "ws": "^8.18.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.6.0",
     "@capacitor/cli": "^8.6.0",
     "@capacitor/ios": "^8.6.0",
     "@types/canvas-confetti": "^1.9.0",
