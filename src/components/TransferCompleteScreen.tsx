@@ -91,19 +91,19 @@ export const TransferCompleteScreen: React.FC = () => {
 
         {/* Title */}
         <h1 className="text-2xl font-bold tracking-tight text-flux-primary mb-1">
-          Transfer complete!
+          {isReceiver ? 'File Berhasil Diterima!' : 'Transfer Selesai!'}
         </h1>
         <p className="text-xs sm:text-sm text-flux-secondary text-center mb-6">
           {isReceiver
-            ? 'Your files are ready to be saved to this device.'
-            : 'All files were successfully delivered and verified.'}
+            ? 'File otomatis tersimpan langsung ke Galeri Foto & Memori HP Anda.'
+            : 'Semua file berhasil dikirim dan diverifikasi.'}
         </p>
 
         {/* Summary Pill */}
         <div className="w-full p-3.5 rounded-2xl bg-flux-surface-subtle border border-flux-border flex items-center justify-between text-xs text-flux-secondary mb-6">
           <div className="flex items-center space-x-2">
             <ShieldCheck className="w-4 h-4 text-flux-success" />
-            <span className="font-semibold text-flux-primary">SHA-256 Verified</span>
+            <span className="font-semibold text-flux-primary">SHA-256 Terverifikasi</span>
           </div>
           <span>
             {transferredFiles.length} {transferredFiles.length === 1 ? 'file' : 'files'} •{' '}
@@ -128,8 +128,17 @@ export const TransferCompleteScreen: React.FC = () => {
                     <div className="text-xs font-semibold text-flux-primary truncate">
                       {file.name}
                     </div>
-                    <div className="text-[11px] text-flux-secondary">
-                      {formatBytes(file.size)}
+                    <div className="text-[11px] text-flux-secondary flex items-center space-x-1.5 mt-0.5">
+                      <span>{formatBytes(file.size)}</span>
+                      {isReceiver && (
+                        <>
+                          <span>•</span>
+                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center">
+                            <CheckCircle2 className="w-3 h-3 mr-0.5 inline" />
+                            Tersimpan di Galeri
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -140,10 +149,10 @@ export const TransferCompleteScreen: React.FC = () => {
                     <button
                       onClick={() => handleDownloadSingle(file)}
                       className="p-2 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent transition-colors text-xs font-semibold flex items-center space-x-1"
-                      title="Save file"
+                      title="Simpan file manual"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Save</span>
+                      <span className="hidden sm:inline">Unduh</span>
                     </button>
                     {/* For images / videos on iOS Safari: open in tab for long-press 'Save to Photos' */}
                     {['Photos', 'Videos'].includes(cat) && (
@@ -152,7 +161,7 @@ export const TransferCompleteScreen: React.FC = () => {
                         target="_blank"
                         rel="noreferrer"
                         className="p-2 rounded-xl bg-flux-surface-subtle text-flux-secondary hover:text-flux-primary transition-colors"
-                        title="Preview in new tab"
+                        title="Buka pratinjau"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
                       </a>
@@ -172,7 +181,7 @@ export const TransferCompleteScreen: React.FC = () => {
             className="w-full py-3.5 px-4 rounded-2xl bg-flux-primary text-flux-surface hover:bg-flux-accent text-xs font-semibold flex items-center justify-center space-x-2 transition-all active:scale-95 mb-3 shadow-subtle"
           >
             <Archive className="w-4 h-4" />
-            <span>{isZipping ? 'Creating ZIP...' : 'Download All as ZIP Archive'}</span>
+            <span>{isZipping ? 'Membuat ZIP...' : 'Download Semua sebagai ZIP'}</span>
           </button>
         )}
 
@@ -187,6 +196,14 @@ export const TransferCompleteScreen: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setScreen('history')}
+            className="w-full py-2.5 px-4 rounded-2xl bg-flux-surface-subtle border border-flux-border hover:bg-flux-border text-flux-secondary hover:text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors active:scale-95"
+          >
+            <Files className="w-4 h-4 text-flux-accent" />
+            <span>Buka Riwayat Transfer</span>
+          </button>
+
+          <button
             onClick={() => {
               if (session.role === 'sender') {
                 setScreen('send');
@@ -194,9 +211,9 @@ export const TransferCompleteScreen: React.FC = () => {
                 setScreen('receive');
               }
             }}
-            className="w-full py-2.5 px-4 rounded-2xl bg-flux-surface-subtle border border-flux-border hover:bg-flux-border text-flux-secondary hover:text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors active:scale-95"
+            className="w-full py-2 px-4 rounded-2xl text-flux-secondary hover:text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RotateCcw className="w-3.5 h-3.5" />
             <span>Kirim / Terima File Lagi</span>
           </button>
         </div>

@@ -16,6 +16,7 @@ import { webrtc } from '../services/webrtc';
 import { relay } from '../services/relay';
 import { getApiEndpoint, setTargetServerUrl, fetchWithFallback, discoverWorkingServer } from '../utils/api';
 import { disconnectNativeWifi } from '../utils/wifi';
+import { saveFileToNativeGallery, deleteFileFromDevice } from '../utils/gallery';
 import confetti from 'canvas-confetti';
 
 interface FluxContextType {
@@ -50,6 +51,8 @@ interface FluxContextType {
   cancelActiveTransfer: (reason?: string) => void;
   resetTransferState: () => void;
   clearHistory: () => void;
+  deleteHistoryRecord: (id: string) => void;
+  deleteFileFromDeviceAndHistory: (recordId: string, fileIndex?: number) => Promise<{ success: boolean; error?: string }>;
   switchRelayMode: (reason?: string) => void;
 }
 
@@ -286,6 +289,54 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('flux_history');
   }, []);
 
+  const deleteHistoryRecord = useCallback((id: string) => {
+    setHistory((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      localStorage.setItem('flux_history', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const deleteFileFromDeviceAndHistory = useCallback(async (recordId: string, fileIndex?: number) => {
+    let fileInfo: { localId?: string; name: string } | undefined;
+    setHistory((prev) => {
+      const record = prev.find((item) => item.id === recordId);
+      if (record) {
+        if (typeof fileIndex === 'number' && record.files[fileIndex]) {
+          fileInfo = {
+            localId: record.files[fileIndex].localId,
+            name: record.files[fileIndex].name,
+          };
+        } else if (record.files[0]) {
+          fileInfo = {
+            localId: record.files[0].localId,
+            name: record.files[0].name,
+          };
+        }
+      }
+      return prev;
+    });
+
+    if (fileInfo) {
+      await deleteFileFromDevice(fileInfo.localId, fileInfo.name);
+    }
+
+    setHistory((prev) => {
+      const next = prev.map((item) => {
+        if (item.id !== recordId) return item;
+        const updatedFiles = item.files.map((f, idx) => {
+          if (typeof fileIndex === 'number' && idx !== fileIndex) return f;
+          return { ...f, deletedFromDevice: true };
+        });
+        return { ...item, files: updatedFiles };
+      });
+      localStorage.setItem('flux_history', JSON.stringify(next));
+      return next;
+    });
+
+    return { success: true };
+  }, []);
+
   // WebRTC Signal forwarding listener setup
   useEffect(() => {
     const onSignal = async ({ signal }: { from: 'sender' | 'receiver'; signal: any }) => {
@@ -469,8 +520,33 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setTransferStats(payload.stats);
         });
 
+        // Auto-save received file directly to device Gallery (Apple Photos / Android MediaStore)
+        let localId: string | undefined;
+        let savedToGallery = false;
+        try {
+          const saveRes = await saveFileToNativeGallery({
+            name: received.name,
+            blob: received.blob,
+            type: received.type,
+            downloadUrl: received.downloadUrl,
+          });
+          if (saveRes.success) {
+            savedToGallery = true;
+            localId = saveRes.localId;
+            console.log('[Gallery] Auto-saved to gallery successfully:', received.name, localId);
+          }
+        } catch (saveErr) {
+          console.warn('[Gallery] Auto-save error:', saveErr);
+        }
+
+        const finalReceived: FileItem = {
+          ...received,
+          savedToGallery,
+          localId,
+        };
+
         setTransferredFiles((prev) => {
-          const next = [...prev, received];
+          const next = [...prev, finalReceived];
           if (incomingFiles.length > 0 && next.length >= incomingFiles.length) {
             sounds.playComplete();
             confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
@@ -483,7 +559,13 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: crypto.randomUUID(),
           timestamp: Date.now(),
           direction: 'received',
-          files: [{ name: received.name, size: received.size, type: received.type }],
+          files: [{
+            name: received.name,
+            size: received.size,
+            type: received.type,
+            savedToGallery,
+            localId,
+          }],
           totalSize: received.size,
           peerName: session.peerDevice?.name || 'Sender',
           status: 'completed',
@@ -537,8 +619,33 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
       switchRelayMode(reason);
     };
 
-    const onWebrtcFileReceived = (file: FileItem) => {
-      setTransferredFiles((prev) => [...prev, file]);
+    const onWebrtcFileReceived = async (file: FileItem) => {
+      // Auto-save received file directly to device Gallery (Apple Photos / Android MediaStore)
+      let localId: string | undefined;
+      let savedToGallery = false;
+      try {
+        const saveRes = await saveFileToNativeGallery({
+          name: file.name,
+          blob: file.blob,
+          type: file.type,
+          downloadUrl: file.downloadUrl,
+        });
+        if (saveRes.success) {
+          savedToGallery = true;
+          localId = saveRes.localId;
+          console.log('[Gallery] WebRTC file auto-saved to gallery:', file.name, localId);
+        }
+      } catch (saveErr) {
+        console.warn('[Gallery] Auto-save error:', saveErr);
+      }
+
+      const finalFile: FileItem = {
+        ...file,
+        savedToGallery,
+        localId,
+      };
+
+      setTransferredFiles((prev) => [...prev, finalFile]);
     };
 
     const onWebrtcProgress = (payload: { fileId: string; stats: TransferStats }) => {
@@ -549,15 +656,33 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
       sounds.playComplete();
       confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
       setScreen('complete');
-      addHistoryRecord({
-        id: crypto.randomUUID(),
-        timestamp: Date.now(),
-        direction: 'received',
-        files: incomingFiles.map((f) => ({ name: f.name, size: f.size, type: f.type })),
-        totalSize: incomingFiles.reduce((acc, f) => acc + f.size, 0),
-        peerName: session.peerDevice?.name || 'Sender',
-        status: 'completed',
-        mode: 'p2p',
+
+      setTransferredFiles((currentTransferred) => {
+        const filesToLog = currentTransferred.length > 0
+          ? currentTransferred.map((f) => ({
+              name: f.name,
+              size: f.size,
+              type: f.type,
+              savedToGallery: f.savedToGallery,
+              localId: f.localId,
+            }))
+          : incomingFiles.map((f) => ({
+              name: f.name,
+              size: f.size,
+              type: f.type,
+            }));
+
+        addHistoryRecord({
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          direction: 'received',
+          files: filesToLog,
+          totalSize: filesToLog.reduce((acc, f) => acc + f.size, 0),
+          peerName: session.peerDevice?.name || 'Sender',
+          status: 'completed',
+          mode: 'p2p',
+        });
+        return currentTransferred;
       });
     };
 
@@ -833,6 +958,8 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cancelActiveTransfer,
         resetTransferState,
         clearHistory,
+        deleteHistoryRecord,
+        deleteFileFromDeviceAndHistory,
         switchRelayMode,
       }}
     >

@@ -50,6 +50,9 @@ export interface FileItem {
   status: 'pending' | 'transferring' | 'completed' | 'failed';
   blob?: Blob;
   downloadUrl?: string;
+  savedToGallery?: boolean;
+  localId?: string;
+  deletedFromDevice?: boolean;
 }
 
 export interface SessionState {
@@ -75,15 +78,20 @@ export interface TransferStats {
   mode: 'p2p' | 'relay';
 }
 
+export interface HistoryFileItem {
+  name: string;
+  size: number;
+  type: string;
+  savedToGallery?: boolean;
+  localId?: string;
+  deletedFromDevice?: boolean;
+}
+
 export interface HistoryRecord {
   id: string;
   timestamp: number;
   direction: 'sent' | 'received';
-  files: {
-    name: string;
-    size: number;
-    type: string;
-  }[];
+  files: HistoryFileItem[];
   totalSize: number;
   peerName: string;
   status: 'completed' | 'cancelled' | 'failed';

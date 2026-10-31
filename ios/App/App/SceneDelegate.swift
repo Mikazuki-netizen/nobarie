@@ -4,12 +4,18 @@ import Capacitor
 import AVFoundation
 import NetworkExtension
 import Network
+import Photos
 
 class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessageHandler {
     private var localNetworkBrowser: NWBrowser?
     private var activeHotspotSsid: String?
-
     private weak var originalUIDelegate: WKUIDelegate?
+
+    // Active file stream buffers for gallery saving
+    private var activeFileHandles: [String: FileHandle] = [:]
+    private var activeTempUrls: [String: URL] = [:]
+    private var activeMimeTypes: [String: String] = [:]
+    private var activeFileNames: [String: String] = [:]
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -21,7 +27,18 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
             print("[NoBarier] Camera permission status: \(granted)")
         }
 
-        // 2. Trigger iOS Local Network Privacy prompt
+        // 2. Request Photo Library access explicitly
+        if #available(iOS 14.0, *) {
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                print("[NoBarier] Photo library auth status: \(status.rawValue)")
+            }
+        } else {
+            PHPhotoLibrary.requestAuthorization { status in
+                print("[NoBarier] Photo library auth status: \(status.rawValue)")
+            }
+        }
+
+        // 3. Trigger iOS Local Network Privacy prompt
         triggerLocalNetworkDiscovery()
     }
 
@@ -49,6 +66,7 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController.add(self, name: "nativeWifi")
+        config.userContentController.add(self, name: "nativeGallery")
         return config
     }
 
@@ -86,20 +104,143 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "nativeWifi", let dict = message.body as? [String: Any] else { return }
-        
-        let action = dict["action"] as? String ?? ""
-        if action == "join", let ssid = dict["ssid"] as? String {
-            activeHotspotSsid = ssid
-            let pass = dict["password"] as? String
-            joinHotspot(ssid: ssid, password: pass)
-        } else if action == "disconnect" {
-            let targetSsid = (dict["ssid"] as? String) ?? activeHotspotSsid
-            if let ssid = targetSsid, !ssid.isEmpty {
-                NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
-                print("[NoBarier] Unpaired and disconnected from hotspot: \(ssid)")
+        if message.name == "nativeWifi", let dict = message.body as? [String: Any] {
+            let action = dict["action"] as? String ?? ""
+            if action == "join", let ssid = dict["ssid"] as? String {
+                activeHotspotSsid = ssid
+                let pass = dict["password"] as? String
+                joinHotspot(ssid: ssid, password: pass)
+            } else if action == "disconnect" {
+                let targetSsid = (dict["ssid"] as? String) ?? activeHotspotSsid
+                if let ssid = targetSsid, !ssid.isEmpty {
+                    NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
+                    print("[NoBarier] Unpaired and disconnected from hotspot: \(ssid)")
+                }
+                activeHotspotSsid = nil
             }
-            activeHotspotSsid = nil
+            return
+        }
+
+        if message.name == "nativeGallery", let dict = message.body as? [String: Any] {
+            let action = dict["action"] as? String ?? ""
+            
+            if action == "startFile" {
+                let transferId = dict["transferId"] as? String ?? UUID().uuidString
+                let fileName = dict["fileName"] as? String ?? "file"
+                let mimeType = dict["mimeType"] as? String ?? ""
+                let tempDir = FileManager.default.temporaryDirectory
+                let tempUrl = tempDir.appendingPathComponent("nobarier_\(transferId)_\(fileName)")
+                try? FileManager.default.removeItem(at: tempUrl)
+                FileManager.default.createFile(atPath: tempUrl.path, contents: nil, attributes: nil)
+                if let handle = FileHandle(forWritingAtPath: tempUrl.path) {
+                    activeFileHandles[transferId] = handle
+                    activeTempUrls[transferId] = tempUrl
+                    activeMimeTypes[transferId] = mimeType
+                    activeFileNames[transferId] = fileName
+                }
+            } else if action == "appendChunk" {
+                let transferId = dict["transferId"] as? String ?? ""
+                let base64Chunk = dict["base64Chunk"] as? String ?? ""
+                if let handle = activeFileHandles[transferId], let data = Data(base64Encoded: base64Chunk) {
+                    if #available(iOS 13.4, *) {
+                        try? handle.write(contentsOf: data)
+                    } else {
+                        handle.write(data)
+                    }
+                }
+            } else if action == "finishFile" {
+                let transferId = dict["transferId"] as? String ?? ""
+                let callbackId = dict["callbackId"] as? String ?? ""
+                if let handle = activeFileHandles.removeValue(forKey: transferId) {
+                    try? handle.close()
+                }
+                guard let tempUrl = activeTempUrls.removeValue(forKey: transferId) else {
+                    let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', false, '', 'Temp file missing');"
+                    self.webView?.evaluateJavaScript(js, completionHandler: nil)
+                    return
+                }
+                let mimeType = activeMimeTypes.removeValue(forKey: transferId) ?? ""
+                let fileName = activeFileNames.removeValue(forKey: transferId) ?? tempUrl.lastPathComponent
+
+                let ext = tempUrl.pathExtension.lowercased()
+                let isVideo = mimeType.starts(with: "video/") || ["mp4", "mov", "m4v", "mkv", "webm", "avi"].contains(ext)
+                let isPhoto = mimeType.starts(with: "image/") || ["jpg", "jpeg", "png", "webp", "gif", "heic"].contains(ext)
+
+                if isVideo || isPhoto {
+                    var localId: String?
+                    PHPhotoLibrary.shared().performChanges({
+                        let request = PHAssetCreationRequest.forAsset()
+                        let opt = PHAssetResourceCreationOptions()
+                        opt.originalFilename = fileName
+                        if isVideo {
+                            request.addResource(with: .video, fileURL: tempUrl, options: opt)
+                        } else {
+                            request.addResource(with: .photo, fileURL: tempUrl, options: opt)
+                        }
+                        localId = request.placeholderForCreatedAsset?.localIdentifier
+                    }) { success, error in
+                        try? FileManager.default.removeItem(at: tempUrl)
+                        DispatchQueue.main.async {
+                            let errStr = error?.localizedDescription.replacingOccurrences(of: "'", with: "\\'") ?? ""
+                            let idStr = localId?.replacingOccurrences(of: "'", with: "\\'") ?? ""
+                            let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', \(success), '\(idStr)', '\(errStr)');"
+                            self.webView?.evaluateJavaScript(js, completionHandler: nil)
+                        }
+                    }
+                } else {
+                    // Documents / Audio / Other files: Save to Documents directory (visible in Files app)
+                    if let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                        let targetUrl = docsDir.appendingPathComponent(fileName)
+                        try? FileManager.default.removeItem(at: targetUrl)
+                        do {
+                            try FileManager.default.moveItem(at: tempUrl, to: targetUrl)
+                            DispatchQueue.main.async {
+                                let pathStr = targetUrl.path.replacingOccurrences(of: "'", with: "\\'")
+                                let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', true, '\(pathStr)', '');"
+                                self.webView?.evaluateJavaScript(js, completionHandler: nil)
+                            }
+                        } catch {
+                            DispatchQueue.main.async {
+                                let errStr = error.localizedDescription.replacingOccurrences(of: "'", with: "\\'")
+                                let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', false, '', '\(errStr)');"
+                                self.webView?.evaluateJavaScript(js, completionHandler: nil)
+                            }
+                        }
+                    }
+                }
+            } else if action == "deleteMedia" {
+                let localId = dict["localId"] as? String ?? ""
+                let fileName = dict["fileName"] as? String ?? ""
+                let callbackId = dict["callbackId"] as? String ?? ""
+
+                if !localId.isEmpty {
+                    let assets = PHAsset.fetchAssets(withLocalIdentifiers: [localId], options: nil)
+                    if assets.count > 0 {
+                        PHPhotoLibrary.shared().performChanges({
+                            PHAssetChangeRequest.deleteAssets(assets)
+                        }) { success, error in
+                            DispatchQueue.main.async {
+                                let errStr = error?.localizedDescription.replacingOccurrences(of: "'", with: "\\'") ?? ""
+                                let js = "window.onNativeGalleryDelete && window.onNativeGalleryDelete('\(callbackId)', \(success), '\(errStr)');"
+                                self.webView?.evaluateJavaScript(js, completionHandler: nil)
+                            }
+                        }
+                        return
+                    }
+                }
+
+                // Check Documents directory
+                if let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first, !fileName.isEmpty {
+                    let targetUrl = docsDir.appendingPathComponent(fileName)
+                    if FileManager.default.fileExists(atPath: targetUrl.path) {
+                        try? FileManager.default.removeItem(at: targetUrl)
+                    }
+                }
+
+                let js = "window.onNativeGalleryDelete && window.onNativeGalleryDelete('\(callbackId)', true, '');"
+                self.webView?.evaluateJavaScript(js, completionHandler: nil)
+            }
+            return
         }
     }
 
