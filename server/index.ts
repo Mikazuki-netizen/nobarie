@@ -94,19 +94,52 @@ const upload = multer({
   limits: { fileSize: 500 * 1024 * 1024 } // 500MB per file relay cap
 });
 
-function getLocalIp(): string {
+function getAllIps(): string[] {
   const interfaces = os.networkInterfaces();
+  const ips: string[] = [];
   for (const name of Object.keys(interfaces)) {
     const iface = interfaces[name];
     if (!iface) continue;
     for (const alias of iface) {
-      if (alias.family === 'IPv4' && !alias.internal && alias.address.startsWith('10.') || alias.address.startsWith('192.168.') || alias.address.startsWith('172.')) {
-        return alias.address;
+      if (alias.family === 'IPv4' && !alias.internal) {
+        ips.push(alias.address);
       }
     }
   }
-  return '127.0.0.1';
+  return ips.length > 0 ? ips : ['127.0.0.1'];
 }
+
+function getLocalIp(): string {
+  const all = getAllIps();
+  // Prioritize 10.x, 192.168.x, 172.x private subnets
+  const lan = all.find((ip) => ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.'));
+  return lan || all[0] || '127.0.0.1';
+}
+
+interface DiscoveredPeer {
+  id: string;
+  name: string;
+  platform: string;
+  ip: string;
+  port: number;
+  sessionId?: string;
+  token?: string;
+  shortCode?: string;
+  role: 'receiver' | 'sender';
+  lastSeen: number;
+}
+
+const localPeers = new Map<string, DiscoveredPeer>();
+
+// Periodic cleanup of stale discovered peers (> 45s)
+setInterval(() => {
+  const cutoff = Date.now() - 45000;
+  for (const [id, peer] of localPeers.entries()) {
+    if (peer.lastSeen < cutoff) {
+      localPeers.delete(id);
+    }
+  }
+}, 10000);
 
 // REST Endpoints
 app.get('/api/info', (_req, res) => {
@@ -114,9 +147,61 @@ app.get('/api/info', (_req, res) => {
     name: 'NoBarier Relay & Signaling Engine',
     version: '1.0.0',
     localIp: getLocalIp(),
+    allIps: getAllIps(),
     clientPort: 3000,
     serverPort: PORT,
   });
+});
+
+app.get('/api/network', (_req, res) => {
+  const allIps = getAllIps();
+  const primaryIp = getLocalIp();
+  res.json({
+    localIp: primaryIp,
+    allIps,
+    clientPort: 3000,
+    serverPort: PORT,
+    hotspot: {
+      ssid: 'NoBarier-Hotspot',
+      password: 'nobarierpass',
+      suggestedIp: primaryIp,
+    }
+  });
+});
+
+app.post('/api/discovery/announce', (req, res) => {
+  const { id, name, platform, sessionId, token, shortCode, role } = req.body;
+  if (!id) {
+    res.status(400).json({ error: 'Peer id is required' });
+    return;
+  }
+  const clientIp = req.ip?.replace(/^::ffff:/, '') || getLocalIp();
+  const peer: DiscoveredPeer = {
+    id,
+    name: name || 'NoBarier Peer',
+    platform: platform || 'Other',
+    ip: clientIp === '127.0.0.1' || clientIp === '::1' ? getLocalIp() : clientIp,
+    port: PORT,
+    sessionId,
+    token,
+    shortCode,
+    role: role || 'receiver',
+    lastSeen: Date.now(),
+  };
+  localPeers.set(id, peer);
+  res.json({ success: true, count: localPeers.size });
+});
+
+app.get('/api/discovery/peers', (req, res) => {
+  const excludeId = req.query.excludeId as string;
+  const cutoff = Date.now() - 45000;
+  const peers: DiscoveredPeer[] = [];
+  for (const peer of localPeers.values()) {
+    if (peer.lastSeen >= cutoff && peer.id !== excludeId) {
+      peers.push(peer);
+    }
+  }
+  res.json({ peers });
 });
 
 app.post('/api/session/create', (_req, res) => {

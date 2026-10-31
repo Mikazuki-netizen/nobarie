@@ -2,12 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useFlux } from '../context/FluxContext';
 import { Html5Qrcode, Html5QrcodeCameraScanConfig } from 'html5-qrcode';
 import { QrCode, KeyRound, Camera, RefreshCw, AlertCircle, ArrowLeft, Flashlight, Upload } from 'lucide-react';
+import { parseWifiQr, joinNativeWifi } from '../utils/wifi';
+import { setTargetServerUrl } from '../utils/api';
 
 export const PairingScreen: React.FC = () => {
-  const { session, connectToSession, connectWithCode, startTransfer, setScreen, setErrorMessage, errorMessage } = useFlux();
+  const { session, selectedFiles, connectToSession, connectWithCode, startTransfer, setScreen, setErrorMessage, errorMessage } = useFlux();
   const [tab, setTab] = useState<'scan' | 'manual'>('scan');
   const [digits, setDigits] = useState<string[]>(['', '', '', '', '', '']);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionStatusText, setConnectionStatusText] = useState('Connecting to receiver...');
   const [scannerStarted, setScannerStarted] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
@@ -21,6 +24,7 @@ export const PairingScreen: React.FC = () => {
   const handleScanSuccess = async (decodedText: string) => {
     if (isConnecting) return;
     setIsConnecting(true);
+    setConnectionStatusText('Memproses QR Code...');
 
     try {
       // Stop scanner
@@ -29,17 +33,57 @@ export const PairingScreen: React.FC = () => {
         setScannerStarted(false);
       }
 
+      // 0. Try Wi-Fi QR code parsing (SHAREit Hotspot / Local Network QR)
+      const wifi = parseWifiQr(decodedText);
+      if (wifi.isWifi) {
+        if (wifi.ssid) {
+          setConnectionStatusText(`Menghubungkan ke Wi-Fi ${wifi.ssid}...`);
+          joinNativeWifi(wifi.ssid, wifi.password);
+        }
+        if (wifi.url) {
+          try {
+            const urlObj = new URL(wifi.url);
+            const backendPort = urlObj.port === '3000' ? ':3001' : (urlObj.port ? `:${urlObj.port}` : '');
+            const backendOrigin = `${urlObj.protocol}//${urlObj.hostname}${backendPort}`;
+            setTargetServerUrl(backendOrigin);
+          } catch {
+            setTargetServerUrl(wifi.url);
+          }
+        }
+        if (wifi.code) {
+          setConnectionStatusText('Memasangkan kode 6-digit...');
+          await connectWithCode(wifi.code);
+          return;
+        } else if (wifi.sid && wifi.token) {
+          setConnectionStatusText('Membuat koneksi langsung...');
+          await connectToSession(wifi.sid, wifi.token);
+          return;
+        }
+
+        setIsConnecting(false);
+        setTab('manual');
+        return;
+      }
+
       // 1. Try URL parsing (e.g. http://10.0.10.20:3000/?sid=...&token=...)
       try {
         const url = new URL(decodedText);
+        if (url.origin && url.origin !== window.location.origin) {
+          const backendPort = url.port === '3000' ? ':3001' : (url.port ? `:${url.port}` : '');
+          const backendOrigin = `${url.protocol}//${url.hostname}${backendPort}`;
+          setTargetServerUrl(backendOrigin);
+        }
+
         const sid = url.searchParams.get('sid');
         const token = url.searchParams.get('token');
         const code = url.searchParams.get('code');
 
         if (sid && token) {
+          setConnectionStatusText('Membuat koneksi langsung...');
           await connectToSession(sid, token);
           return;
         } else if (code) {
+          setConnectionStatusText('Memasangkan kode 6-digit...');
           await connectWithCode(code);
           return;
         }
@@ -51,6 +95,7 @@ export const PairingScreen: React.FC = () => {
       try {
         const parsed = JSON.parse(decodedText);
         if (parsed.sid && parsed.token) {
+          setConnectionStatusText('Membuat koneksi langsung...');
           await connectToSession(parsed.sid, parsed.token);
           return;
         }
@@ -61,13 +106,14 @@ export const PairingScreen: React.FC = () => {
       // 3. Try 6-digit code
       const cleanDigits = decodedText.trim().replace(/\D/g, '');
       if (cleanDigits.length === 6) {
+        setConnectionStatusText('Memasangkan kode 6-digit...');
         await connectWithCode(cleanDigits);
         return;
       }
 
-      throw new Error('Unrecognized QR code format. Please scan a valid FLUX QR code.');
+      throw new Error('Format QR code tidak dikenali. Silakan scan QR code NoBarier yang valid.');
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to connect via QR code.');
+      setErrorMessage(err.message || 'Gagal terhubung melalui QR code.');
       setIsConnecting(false);
     }
   };
@@ -284,11 +330,11 @@ export const PairingScreen: React.FC = () => {
       {/* Top Bar */}
       <div className="w-full flex items-center justify-between mb-6">
         <button
-          onClick={() => setScreen('send')}
+          onClick={() => setScreen(selectedFiles.length > 0 ? 'radar' : 'send')}
           className="p-2 rounded-xl text-flux-secondary hover:text-flux-primary hover:bg-flux-surface-subtle transition-colors flex items-center space-x-1"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span className="text-xs font-semibold">Back to files</span>
+          <span className="text-xs font-semibold">Kembali ke Radar</span>
         </button>
       </div>
 
@@ -378,8 +424,8 @@ export const PairingScreen: React.FC = () => {
             {isConnecting && (
               <div className="absolute inset-0 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center text-white p-4">
                 <div className="w-10 h-10 border-3 border-white border-t-transparent rounded-full animate-spin mb-3"></div>
-                <p className="text-sm font-semibold">Connecting to receiver...</p>
-                <p className="text-xs text-white/70 mt-1">Establishing secure P2P channel</p>
+                <p className="text-sm font-semibold">{connectionStatusText}</p>
+                <p className="text-xs text-white/70 mt-1">Membangun saluran transfer lokal...</p>
               </div>
             )}
           </div>

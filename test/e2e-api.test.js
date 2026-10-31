@@ -131,9 +131,39 @@ async function runTests() {
   const downloadedHash = crypto.createHash('sha256').update(downloadedBuffer).digest('hex');
 
   assert.strictEqual(downloadedHash, expectedHash, 'Downloaded file SHA-256 must match original payload!');
-  console.log(`  Relay download verified! SHA-256 matches: ${downloadedHash}`);
+  // Test 6: Network & Local IP Detection
+  console.log('[6/7] Testing GET /api/network...');
+  const netRes = await fetch('http://localhost:3001/api/network');
+  assert.strictEqual(netRes.status, 200);
+  const netData = await netRes.json();
+  console.log('  Network info:', netData);
+  assert.ok(Array.isArray(netData.allIps), 'allIps must be an array');
+  assert.ok(netData.hotspot, 'Default hotspot credentials must be provided');
 
-  console.log('\n>>> ALL 5 END-TO-END TESTS PASSED SUCCESSFULLY! <<<');
+  // Test 7: SHAREit Peer Announcement and Discovery
+  console.log('[7/7] Testing Peer Discovery (/api/discovery/announce & /api/discovery/peers)...');
+  const announceRes = await fetch('http://localhost:3001/api/discovery/announce', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: 'receiver-test-device-id',
+      name: 'Android Receiver Tester',
+      platform: 'Android',
+      sessionId: session.sessionId,
+      token: session.token,
+      shortCode: session.shortCode,
+      url: `http://localhost:3000/?sid=${session.sessionId}&token=${session.token}&code=${session.shortCode}`
+    })
+  });
+  assert.strictEqual(announceRes.status, 200);
+
+  const peersRes = await fetch('http://localhost:3001/api/discovery/peers');
+  assert.strictEqual(peersRes.status, 200);
+  const data = await peersRes.json();
+  console.log('  Discovered peers on local network:', data.peers);
+  assert.ok(data.peers.some((p) => p.id === 'receiver-test-device-id'), 'Announced receiver must appear in discovered peers list');
+
+  console.log('\n>>> ALL 7 END-TO-END TESTS (INCLUDING SHAREit DISCOVERY) PASSED SUCCESSFULLY! <<<');
 }
 
 runTests().catch((err) => {

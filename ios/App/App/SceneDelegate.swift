@@ -3,7 +3,9 @@ import WebKit
 import Capacitor
 import AVFoundation
 
-class MainViewController: CAPBridgeViewController, WKUIDelegate {
+import NetworkExtension
+
+class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessageHandler {
     override func viewDidLoad() {
         super.viewDidLoad()
         
@@ -17,12 +19,41 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate {
         let config = super.webViewConfiguration(for: instanceConfiguration)
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        config.userContentController.add(self, name: "nativeWifi")
         return config
     }
 
     @available(iOS 15.0, *)
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
         decisionHandler(.grant)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "nativeWifi", let dict = message.body as? [String: Any] else { return }
+        
+        if let action = dict["action"] as? String, action == "join", let ssid = dict["ssid"] as? String {
+            let pass = dict["password"] as? String
+            joinHotspot(ssid: ssid, password: pass)
+        }
+    }
+
+    private func joinHotspot(ssid: String, password: String?) {
+        if #available(iOS 11.0, *) {
+            let config: NEHotspotConfiguration
+            if let p = password, !p.isEmpty {
+                config = NEHotspotConfiguration(ssid: ssid, passphrase: p, isWEP: false)
+            } else {
+                config = NEHotspotConfiguration(ssid: ssid)
+            }
+            config.joinOnce = false
+            NEHotspotConfigurationManager.shared.apply(config) { error in
+                if let err = error {
+                    print("[NoBarier] Hotspot apply error: \(err.localizedDescription)")
+                } else {
+                    print("[NoBarier] Successfully joined hotspot: \(ssid)")
+                }
+            }
+        }
     }
 }
 

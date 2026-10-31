@@ -3,6 +3,7 @@ import { useFlux } from './context/FluxContext';
 import { Navbar } from './components/Navbar';
 import { HomeScreen } from './components/HomeScreen';
 import { SendScreen } from './components/SendScreen';
+import { RadarScreen } from './components/RadarScreen';
 import { PairingScreen } from './components/PairingScreen';
 import { ReceiveScreen } from './components/ReceiveScreen';
 import { IncomingTransferModal } from './components/IncomingTransferModal';
@@ -21,6 +22,8 @@ export const App: React.FC = () => {
         return <HomeScreen />;
       case 'send':
         return <SendScreen />;
+      case 'radar':
+        return <RadarScreen />;
       case 'pairing':
         return <PairingScreen />;
       case 'receive':

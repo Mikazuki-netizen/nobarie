@@ -1,6 +1,7 @@
 export type FluxScreen =
   | 'home'
   | 'send'
+  | 'radar'
   | 'pairing'
   | 'receive'
   | 'incoming'
@@ -15,6 +16,27 @@ export interface DeviceInfo {
   browser: string;
   isMobile: boolean;
 }
+
+export interface DiscoveredPeer {
+  id: string;
+  name: string;
+  platform: 'iOS' | 'Android' | 'macOS' | 'Windows' | 'Linux' | 'Other';
+  ip: string;
+  port: number;
+  sessionId?: string;
+  token?: string;
+  shortCode?: string;
+  role: 'receiver' | 'sender';
+  lastSeen: number;
+}
+
+export interface HotspotInfo {
+  ssid: string;
+  password?: string;
+  gatewayIp: string;
+  clientIp?: string;
+}
+
 
 export interface FileItem {
   id: string;

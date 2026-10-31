@@ -5,3 +5,5 @@ dist
 .env.local
 ios/App/Pods
 ios/App/DerivedData
+bin/
+uploads/

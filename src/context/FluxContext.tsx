@@ -7,13 +7,14 @@ import {
   TransferStats,
   HistoryRecord,
   AppSettings,
+  DiscoveredPeer,
 } from '../types/flux';
 import { detectDevice } from '../utils/device';
 import { sounds } from '../utils/audio';
 import { signaling } from '../services/signaling';
 import { webrtc } from '../services/webrtc';
 import { relay } from '../services/relay';
-import { getApiEndpoint } from '../utils/api';
+import { getApiEndpoint, setTargetServerUrl } from '../utils/api';
 import confetti from 'canvas-confetti';
 
 interface FluxContextType {
@@ -32,6 +33,8 @@ interface FluxContextType {
   errorMessage: string | null;
   setErrorMessage: (msg: string | null) => void;
   networkInfo: { localIp?: string; clientPort?: number };
+  discoveredPeers: DiscoveredPeer[];
+  connectToPeer: (peer: DiscoveredPeer) => Promise<void>;
   
   // Actions
   addFiles: (files: FileList | File[]) => Promise<void>;
@@ -93,6 +96,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [transferStats, setTransferStats] = useState<TransferStats>(INITIAL_STATS);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [networkInfo, setNetworkInfo] = useState<{ localIp?: string; clientPort?: number }>({});
+  const [discoveredPeers, setDiscoveredPeers] = useState<DiscoveredPeer[]>([]);
 
   const isTransferringRef = useRef(false);
 
@@ -136,6 +140,58 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Fallback
       });
   }, []);
+
+  // Periodic announcement when on 'receive' screen
+  useEffect(() => {
+    if (screen !== 'receive' || !session.sessionId) return;
+
+    const announce = async () => {
+      try {
+        await fetch(getApiEndpoint('/api/discovery/announce'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: session.sessionId,
+            name: device.name,
+            platform: device.platform,
+            sessionId: session.sessionId,
+            token: session.token,
+            shortCode: session.shortCode,
+            role: 'receiver',
+          }),
+        });
+      } catch {
+        // Ignore network errors
+      }
+    };
+
+    announce();
+    const interval = setInterval(announce, 4000);
+    return () => clearInterval(interval);
+  }, [screen, session.sessionId, session.token, session.shortCode, device]);
+
+  // Periodic discovery polling when searching for peers on 'radar', 'send', or 'pairing'
+  useEffect(() => {
+    if (screen !== 'radar' && screen !== 'pairing' && screen !== 'send') return;
+
+    const fetchPeers = async () => {
+      try {
+        const res = await fetch(getApiEndpoint(`/api/discovery/peers?excludeId=${session.sessionId || ''}`));
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.peers)) {
+            setDiscoveredPeers(data.peers);
+          }
+        }
+      } catch {
+        // Ignore network errors
+      }
+    };
+
+    fetchPeers();
+    const interval = setInterval(fetchPeers, 3000);
+    return () => clearInterval(interval);
+  }, [screen, session.sessionId]);
 
   // Theme synchronization
   useEffect(() => {
@@ -594,6 +650,27 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [connectToSession]);
 
+  // Connect to discovered local peer (SHAREit Radar)
+  const connectToPeer = useCallback(async (peer: DiscoveredPeer) => {
+    try {
+      setErrorMessage(null);
+      if (peer.ip) {
+        setTargetServerUrl(`http://${peer.ip}:${peer.port || 3001}`);
+      }
+      if (peer.sessionId && peer.token) {
+        await connectToSession(peer.sessionId, peer.token);
+      } else if (peer.shortCode) {
+        await connectWithCode(peer.shortCode);
+      } else {
+        throw new Error('Informasi pairing perangkat tidak lengkap.');
+      }
+    } catch (err: any) {
+      sounds.playError();
+      setErrorMessage(err.message || 'Gagal terhubung ke perangkat penerima.');
+      throw err;
+    }
+  }, [connectToSession, connectWithCode]);
+
   // Start Transfer (Sender sends manifest to Receiver)
   const startTransfer = useCallback(async () => {
     if (selectedFiles.length === 0) {
@@ -687,6 +764,8 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
         errorMessage,
         setErrorMessage,
         networkInfo,
+        discoveredPeers,
+        connectToPeer,
         addFiles,
         removeFile,
         clearSelectedFiles,

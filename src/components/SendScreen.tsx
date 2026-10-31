@@ -61,7 +61,7 @@ export const SendScreen: React.FC = () => {
       setErrorMessage('Please select at least one file to continue.');
       return;
     }
-    setScreen('pairing');
+    setScreen('radar');
   };
 
   const renderIconForCategory = (cat: string) => {
