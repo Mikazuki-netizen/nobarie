@@ -3,12 +3,9 @@ import { FileItem, TransferStats } from '../types/flux';
 import { signaling } from './signaling';
 
 const CHUNK_SIZE = 64 * 1024; // 64 KB chunks
-const BUFFER_THRESHOLD = 256 * 1024; // 256 KB backpressure threshold
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-];
+const BUFFER_THRESHOLD = 512 * 1024; // 512 KB backpressure threshold
+// Empty for instant local host ICE candidate gathering on offline Wi-Fi / Hotspot
+const ICE_SERVERS: RTCIceServer[] = [];
 
 export interface WebRTCProgressPayload {
   fileId: string;
@@ -97,9 +94,9 @@ export class WebRTCManager {
     this.clearIceTimeout();
     this.iceTimeout = setTimeout(() => {
       if (!this.isConnected) {
-        this.emit('fallbackToRelay', 'P2P negotiation timed out. Switching to relay fallback.');
+        this.emit('fallbackToRelay', 'Koneksi P2P timeout. Beralih ke Relay Lokal Berkecepatan Tinggi.');
       }
-    }, 15000);
+    }, 3500);
   }
 
   private clearIceTimeout() {
@@ -269,10 +266,34 @@ export class WebRTCManager {
     }
   }
 
+  async waitForDataChannelOpen(timeoutMs = 3000): Promise<boolean> {
+    if (this.dc && this.dc.readyState === 'open') return true;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      const check = () => {
+        if (this.dc && this.dc.readyState === 'open') {
+          clearTimeout(timer);
+          resolve(true);
+        }
+      };
+      if (this.dc) {
+        this.dc.addEventListener('open', check, { once: true });
+      }
+      const interval = setInterval(() => {
+        if (this.dc && this.dc.readyState === 'open') {
+          clearInterval(interval);
+          clearTimeout(timer);
+          resolve(true);
+        }
+      }, 40);
+    });
+  }
+
   // Sender file streaming with adaptive backpressure
   async sendFiles(files: FileItem[]): Promise<void> {
-    if (!this.dc || this.dc.readyState !== 'open') {
-      throw new Error('DataChannel is not ready');
+    const isReady = await this.waitForDataChannelOpen(3000);
+    if (!isReady || !this.dc || this.dc.readyState !== 'open') {
+      throw new Error('DataChannel belum siap');
     }
 
     this.isCancelled = false;
@@ -375,19 +396,33 @@ export class WebRTCManager {
     }
   }
 
-  private waitForBufferDrain(): Promise<void> {
+  private waitForBufferDrain(maxWaitMs = 800): Promise<void> {
     return new Promise((resolve) => {
       if (!this.dc || this.dc.bufferedAmount <= BUFFER_THRESHOLD) {
         resolve();
         return;
       }
-      const onLow = () => {
+      let timeoutId: any;
+      let intervalId: any;
+      const done = () => {
         if (this.dc) {
-          this.dc.removeEventListener('bufferedamountlow', onLow);
+          this.dc.removeEventListener('bufferedamountlow', done);
         }
+        clearTimeout(timeoutId);
+        clearInterval(intervalId);
         resolve();
       };
-      this.dc.addEventListener('bufferedamountlow', onLow);
+
+      this.dc.addEventListener('bufferedamountlow', done, { once: true });
+
+      // Fallback polling for WebKit / Safari which can drop bufferedamountlow events
+      intervalId = setInterval(() => {
+        if (!this.dc || this.dc.bufferedAmount <= BUFFER_THRESHOLD) {
+          done();
+        }
+      }, 40);
+
+      timeoutId = setTimeout(done, maxWaitMs);
     });
   }
 

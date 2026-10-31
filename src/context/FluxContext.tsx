@@ -301,6 +301,19 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
+    let offerInitiated = false;
+
+    const initiateWebRtcOffer = () => {
+      if (offerInitiated) return;
+      offerInitiated = true;
+      webrtc.init('sender');
+      webrtc.createOffer().then((offer) => {
+        signaling.sendSignal({ sdp: offer });
+      }).catch((err) => {
+        console.error('[WebRTC] Failed to create offer:', err);
+      });
+    };
+
     const onConnectedSender = ({ sessionId, receiverDevice }: { sessionId: string; receiverDevice?: DeviceInfo }) => {
       setSession((prev) => ({
         ...prev,
@@ -309,14 +322,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
         peerDevice: receiverDevice || prev.peerDevice || null,
       }));
       sounds.playConnect();
-
-      // Sender immediately initiates WebRTC offer
-      webrtc.init('sender');
-      webrtc.createOffer().then((offer) => {
-        signaling.sendSignal({ sdp: offer });
-      }).catch((err) => {
-        console.error('[WebRTC] Failed to create offer:', err);
-      });
+      initiateWebRtcOffer();
     };
 
     const onPeerJoined = ({ role, device: peerDev }: { role: 'sender' | 'receiver'; device?: DeviceInfo }) => {
@@ -327,18 +333,14 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }));
       sounds.playConnect();
 
-      // If this client is sender, initiate WebRTC offer
+      // If this client is sender, initiate WebRTC offer once
       if (session.role === 'sender' || role === 'receiver') {
-        webrtc.init('sender');
-        webrtc.createOffer().then((offer) => {
-          signaling.sendSignal({ sdp: offer });
-        }).catch((err) => {
-          console.error('[WebRTC] Failed to create offer:', err);
-        });
+        initiateWebRtcOffer();
       }
     };
 
     const onPeerDisconnected = () => {
+      offerInitiated = false;
       disconnectNativeWifi();
       webrtc.close();
       signaling.disconnect();
@@ -370,7 +372,6 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIncomingFiles(mappedFiles);
 
       if (settings.autoAccept) {
-        // Auto accept if configured
         sounds.playStart();
         signaling.approveFiles(true);
         isTransferringRef.current = true;
@@ -381,52 +382,57 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
+    const executeRelayUpload = async () => {
+      try {
+        setSession((prev) => ({ ...prev, mode: 'relay' }));
+        setTransferStats((prev) => ({ ...prev, mode: 'relay' }));
+        await relay.uploadFiles(
+          session.sessionId,
+          session.token,
+          selectedFiles,
+          (payload) => {
+            setTransferStats(payload.stats);
+            signaling.notifyProgress(payload);
+          }
+        );
+        signaling.notifyComplete({});
+        sounds.playComplete();
+        confetti({ particleCount: 75, spread: 60, origin: { y: 0.7 } });
+        setTransferredFiles(selectedFiles);
+        setScreen('complete');
+        addHistoryRecord({
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          direction: 'sent',
+          files: selectedFiles.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+          totalSize: selectedFiles.reduce((acc, f) => acc + f.size, 0),
+          peerName: session.peerDevice?.name || 'Receiver',
+          status: 'completed',
+          mode: 'relay',
+        });
+      } catch (e: any) {
+        sounds.playError();
+        setErrorMessage(e.message || 'Gagal mengirim file via relay lokal.');
+        setScreen('send');
+      }
+    };
+
     const onApproveFiles = async ({ approved }: { approved: boolean }) => {
       if (!approved) {
         sounds.playError();
-        setErrorMessage('Transfer was declined by receiver.');
+        setErrorMessage('Transfer ditolak oleh penerima.');
         setScreen('send');
         return;
       }
 
-      // Approved! Start sending files
       sounds.playStart();
       isTransferringRef.current = true;
       setScreen('transferring');
 
       if (session.mode === 'relay' || settings.preferRelay) {
-        // Relay transfer
-        try {
-          await relay.uploadFiles(
-            session.sessionId,
-            session.token,
-            selectedFiles,
-            (payload) => {
-              setTransferStats(payload.stats);
-              signaling.notifyProgress(payload);
-            }
-          );
-          sounds.playComplete();
-          confetti({ particleCount: 75, spread: 60, origin: { y: 0.7 } });
-          setTransferredFiles(selectedFiles);
-          setScreen('complete');
-          addHistoryRecord({
-            id: crypto.randomUUID(),
-            timestamp: Date.now(),
-            direction: 'sent',
-            files: selectedFiles.map((f) => ({ name: f.name, size: f.size, type: f.type })),
-            totalSize: selectedFiles.reduce((acc, f) => acc + f.size, 0),
-            peerName: session.peerDevice?.name || 'Receiver',
-            status: 'completed',
-            mode: 'relay',
-          });
-        } catch (e: any) {
-          sounds.playError();
-          setErrorMessage(e.message || 'Relay transfer failed.');
-          setScreen('send');
-        }
+        await executeRelayUpload();
       } else {
-        // Direct WebRTC P2P transfer
+        // Direct WebRTC P2P transfer with instant Relay fallback
         try {
           await webrtc.sendFiles(selectedFiles);
           sounds.playComplete();
@@ -444,8 +450,9 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
             mode: 'p2p',
           });
         } catch (e: any) {
-          console.warn('[WebRTC] P2P transfer failed, attempting relay fallback:', e);
-          switchRelayMode('P2P data channel disrupted. Switching to Relay.');
+          console.warn('[WebRTC] P2P channel unavailable, immediately switching to fast local relay:', e);
+          switchRelayMode('P2P dialihkan ke Relay Lokal Berkecepatan Tinggi.');
+          await executeRelayUpload();
         }
       }
     };
@@ -457,16 +464,21 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const onRelayFileReady = async ({ file }: { file: any }) => {
-      // Receiver downloads relay file
       try {
         const received = await relay.downloadFile(file.downloadUrl, file, (payload) => {
           setTransferStats(payload.stats);
         });
 
-        setTransferredFiles((prev) => [...prev, received]);
-        sounds.playComplete();
-        confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
-        setScreen('complete');
+        setTransferredFiles((prev) => {
+          const next = [...prev, received];
+          if (incomingFiles.length > 0 && next.length >= incomingFiles.length) {
+            sounds.playComplete();
+            confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+            setScreen('complete');
+          }
+          return next;
+        });
+
         addHistoryRecord({
           id: crypto.randomUUID(),
           timestamp: Date.now(),
