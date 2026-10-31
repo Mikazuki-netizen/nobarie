@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useFlux } from '../context/FluxContext';
-import { getServerUrl, setTargetServerUrl } from '../utils/api';
 import {
   ArrowLeft,
   Smartphone,
@@ -8,7 +7,6 @@ import {
   Volume2,
   Vibrate,
   Check,
-  Zap,
   Pencil,
 } from 'lucide-react';
 
@@ -16,9 +14,6 @@ export const SettingsScreen: React.FC = () => {
   const { device, updateDeviceName, settings, updateSettings, setScreen } = useFlux();
   const [nameInput, setNameInput] = useState(device.name);
   const [savedSuccess, setSavedSuccess] = useState(false);
-
-  const [serverUrl, setServerUrl] = useState(() => getServerUrl());
-  const [serverSavedSuccess, setServerSavedSuccess] = useState(false);
 
   const handleSaveName = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -35,24 +30,6 @@ export const SettingsScreen: React.FC = () => {
       updateDeviceName(val.trim());
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 2000);
-    }
-  };
-
-  const handleSaveServer = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!serverUrl.trim()) return;
-    setTargetServerUrl(serverUrl.trim());
-    setServerSavedSuccess(true);
-    setTimeout(() => setServerSavedSuccess(false), 2000);
-  };
-
-  const handlePromptServer = () => {
-    const val = window.prompt('Ubah Signaling & Relay Server URL:', serverUrl);
-    if (val !== null && val.trim()) {
-      setServerUrl(val.trim());
-      setTargetServerUrl(val.trim());
-      setServerSavedSuccess(true);
-      setTimeout(() => setServerSavedSuccess(false), 2000);
     }
   };
 
@@ -124,48 +101,7 @@ export const SettingsScreen: React.FC = () => {
         </form>
       </div>
 
-      {/* Server URL Configuration */}
-      <div className="p-5 rounded-3xl bg-flux-surface border border-flux-border shadow-subtle mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center space-x-2.5">
-            <Zap className="w-5 h-5 text-flux-accent" />
-            <h2 className="text-sm font-semibold text-flux-primary">Signaling & Relay Server</h2>
-          </div>
-          <button
-            onClick={handlePromptServer}
-            className="p-1.5 px-2.5 rounded-lg bg-flux-surface-subtle hover:bg-flux-border text-flux-accent text-xs font-semibold flex items-center space-x-1 transition-colors"
-            title="Edit with native keyboard"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            <span>Edit</span>
-          </button>
-        </div>
-        <p className="text-xs text-flux-secondary mb-3">
-          Alamat IP jaringan lokal (Wi-Fi / Hotspot) untuk komunikasi server backend.
-        </p>
-        <form onSubmit={handleSaveServer} className="flex items-center space-x-2">
-          <input
-            type="text"
-            value={serverUrl}
-            onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="http://10.0.10.20:3001"
-            className="flex-1 py-3 px-3 rounded-xl bg-flux-surface-subtle border border-flux-border text-base font-mono text-flux-primary focus:border-flux-accent focus:outline-none transition-colors"
-          />
-          <button
-            type="submit"
-            className="py-3 px-4 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent text-xs font-semibold transition-colors flex items-center space-x-1 shrink-0"
-          >
-            {serverSavedSuccess ? (
-              <>
-                <Check className="w-4 h-4 text-flux-success" />
-                <span>Tersimpan</span>
-              </>
-            ) : (
-              <span>Simpan</span>
-            )}
-          </button>
-        </form>
-      </div>
+
 
       {/* Transfer Preferences */}
       <div className="p-5 rounded-3xl bg-flux-surface border border-flux-border shadow-subtle mb-6 space-y-4">
