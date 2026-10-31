@@ -100,38 +100,31 @@ export const PairingScreen: React.FC = () => {
       const config: Html5QrcodeCameraScanConfig = {
         fps: 15,
         qrbox: { width: 240, height: 240 },
-        aspectRatio: 1.0,
       };
 
-      // Try camera ID first for iOS rear camera selection
-      try {
-        const cameras = await Html5Qrcode.getCameras();
-        if (cameras && cameras.length > 0) {
-          const rearCam = cameras.find((c) => {
-            const label = c.label.toLowerCase();
-            return label.includes('back') || label.includes('rear') || label.includes('environment');
-          }) || cameras[cameras.length - 1];
-
-          await scanner.start(
-            mode === 'environment' ? rearCam.id : { facingMode: 'user' },
-            config,
-            handleScanSuccess,
-            () => {}
-          );
-          setScannerStarted(true);
-          return;
-        }
-      } catch (camErr) {
-        console.warn('[Camera] getCameras failed, fallback to facingMode:', camErr);
-      }
-
-      // Fallback to facingMode constraint
+      // Use standard facingMode (environment / user) for optimal iOS sensor mapping
       await scanner.start(
         { facingMode: mode },
         config,
         handleScanSuccess,
         () => {}
       );
+
+      // Enforce iOS inline video playback attributes
+      setTimeout(() => {
+        const videoEl = document.querySelector<HTMLVideoElement>(`#${qrRegionId} video`);
+        if (videoEl) {
+          videoEl.setAttribute('autoplay', 'true');
+          videoEl.setAttribute('playsinline', 'true');
+          videoEl.setAttribute('webkit-playsinline', 'true');
+          videoEl.setAttribute('muted', 'true');
+          videoEl.muted = true;
+          videoEl.style.width = '100%';
+          videoEl.style.height = '100%';
+          videoEl.style.objectFit = 'cover';
+          videoEl.play().catch((e) => console.warn('[Camera] iOS inline play:', e));
+        }
+      }, 50);
 
       setScannerStarted(true);
     } catch (err: any) {

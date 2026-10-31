@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>NoBarier uses your camera to scan QR codes for quick device pairing.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>NoBarier requires microphone access for media capabilities.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>NoBarier communicates over the local Wi-Fi network to transfer files directly between devices.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

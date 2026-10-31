@@ -106,3 +106,45 @@ html, body {
 .animate-fade-in {
   animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* HTML5 QR Code Scanner Video Styling for iOS WKWebView */
+#flux-qr-reader {
+  width: 100% !important;
+  height: 100% !important;
+  position: relative !important;
+  overflow: hidden !important;
+  border: none !important;
+  background-color: transparent !important;
+}
+
+#flux-qr-reader__scan_region {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+#flux-qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  border-radius: 1.5rem !important;
+  z-index: 1 !important;
+}
+
+#flux-qr-reader canvas {
+  display: none !important;
+}
+
+#qr-shaded-region {
+  display: none !important;
+}
+
