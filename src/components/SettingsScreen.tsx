@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useFlux } from '../context/FluxContext';
+import { getServerUrl, setTargetServerUrl } from '../utils/api';
 import {
   ArrowLeft,
   Smartphone,
@@ -16,9 +17,7 @@ export const SettingsScreen: React.FC = () => {
   const [nameInput, setNameInput] = useState(device.name);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const [serverUrl, setServerUrl] = useState(
-    () => localStorage.getItem('flux_server_url') || 'https://compared-wrist-pin-repository.trycloudflare.com'
-  );
+  const [serverUrl, setServerUrl] = useState(() => getServerUrl());
   const [serverSavedSuccess, setServerSavedSuccess] = useState(false);
 
   const handleSaveName = (e?: React.FormEvent) => {
@@ -42,7 +41,7 @@ export const SettingsScreen: React.FC = () => {
   const handleSaveServer = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!serverUrl.trim()) return;
-    localStorage.setItem('flux_server_url', serverUrl.trim());
+    setTargetServerUrl(serverUrl.trim());
     setServerSavedSuccess(true);
     setTimeout(() => setServerSavedSuccess(false), 2000);
   };
@@ -51,7 +50,7 @@ export const SettingsScreen: React.FC = () => {
     const val = window.prompt('Ubah Signaling & Relay Server URL:', serverUrl);
     if (val !== null && val.trim()) {
       setServerUrl(val.trim());
-      localStorage.setItem('flux_server_url', val.trim());
+      setTargetServerUrl(val.trim());
       setServerSavedSuccess(true);
       setTimeout(() => setServerSavedSuccess(false), 2000);
     }

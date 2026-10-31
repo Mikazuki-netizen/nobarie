@@ -577,25 +577,57 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const createReceiveSession = useCallback(async () => {
     try {
       setErrorMessage(null);
-      const res = await fetch(getApiEndpoint('/api/session/create'), { method: 'POST' });
-      if (!res.ok) throw new Error('Could not create transfer session');
-      const data = await res.json();
+      
+      // Standalone local session credentials
+      const localSessionId = crypto.randomUUID();
+      const localToken = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+      const localShortCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const localExpiresAt = Date.now() + 15 * 60 * 1000;
+
+      let sessionData = {
+        sessionId: localSessionId,
+        token: localToken,
+        shortCode: localShortCode,
+        expiresAt: localExpiresAt,
+      };
+
+      // Attempt to register with local server if reachable
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(getApiEndpoint('/api/session/create'), {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          sessionData = data;
+        }
+      } catch (err) {
+        console.warn('[Session] Server unreachable, running receiver in offline standalone mode:', err);
+      }
 
       setSession({
-        sessionId: data.sessionId,
-        token: data.token,
-        shortCode: data.shortCode,
-        expiresAt: data.expiresAt,
+        sessionId: sessionData.sessionId,
+        token: sessionData.token,
+        shortCode: sessionData.shortCode,
+        expiresAt: sessionData.expiresAt,
         role: 'receiver',
         connected: false,
         peerDevice: null,
         mode: 'p2p',
       });
 
-      await signaling.connect();
-      signaling.registerReceiver(data.sessionId, data.token, device);
-      webrtc.init('receiver');
+      // Attempt signaling connection if available
+      try {
+        await signaling.connect();
+        signaling.registerReceiver(sessionData.sessionId, sessionData.token, device);
+      } catch (err) {
+        console.warn('[Signaling] Standalone receiver mode active:', err);
+      }
 
+      webrtc.init('receiver');
       setScreen('receive');
     } catch (err: any) {
       sounds.playError();
