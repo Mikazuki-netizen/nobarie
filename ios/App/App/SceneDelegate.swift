@@ -6,7 +6,7 @@ import NetworkExtension
 import Network
 import Photos
 
-class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessageHandler {
+class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessageHandler, UIDocumentInteractionControllerDelegate {
     private var localNetworkBrowser: NWBrowser?
     private var activeHotspotSsid: String?
     private weak var originalUIDelegate: WKUIDelegate?
@@ -16,6 +16,9 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
     private var activeTempUrls: [String: URL] = [:]
     private var activeMimeTypes: [String: String] = [:]
     private var activeFileNames: [String: String] = [:]
+
+    // Document interaction controller for QuickLook preview and sharing
+    private var activeDocController: UIDocumentInteractionController?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -38,7 +41,10 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
             }
         }
 
-        // 3. Trigger iOS Local Network Privacy prompt
+        // 3. Ensure custom NoBarier folder exists in Documents
+        _ = getNoBarierDirectory()
+
+        // 4. Trigger iOS Local Network Privacy prompt
         triggerLocalNetworkDiscovery()
     }
 
@@ -48,6 +54,16 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
             self.originalUIDelegate = self.webView?.uiDelegate
             self.webView?.uiDelegate = self
         }
+    }
+
+    /// Custom NoBarier directory inside Documents directory (accessible in Files app under 'On My iPhone' -> 'NoBarier')
+    private func getNoBarierDirectory() -> URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent("NoBarier", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        }
+        return dir
     }
 
     private func triggerLocalNetworkDiscovery() {
@@ -101,6 +117,19 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         return originalUIDelegate?.webView?(webView, createWebViewWith: configuration, for: navigationAction, windowFeatures: windowFeatures)
+    }
+
+    // UIDocumentInteractionControllerDelegate
+    func documentInteractionControllerViewControllerForPreview(_ controller: UIDocumentInteractionController) -> UIViewController {
+        return self
+    }
+
+    func documentInteractionControllerViewForPreview(_ controller: UIDocumentInteractionController) -> UIView? {
+        return self.view
+    }
+
+    func documentInteractionControllerRectForPreview(_ controller: UIDocumentInteractionController) -> CGRect {
+        return self.view.bounds
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -162,50 +191,96 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
                 let mimeType = activeMimeTypes.removeValue(forKey: transferId) ?? ""
                 let fileName = activeFileNames.removeValue(forKey: transferId) ?? tempUrl.lastPathComponent
 
-                let ext = tempUrl.pathExtension.lowercased()
+                // 1. ALWAYS copy file to Documents/NoBarier/ custom folder FIRST
+                let noBarierDir = getNoBarierDirectory()
+                let permanentUrl = noBarierDir.appendingPathComponent(fileName)
+                try? FileManager.default.removeItem(at: permanentUrl)
+                do {
+                    try FileManager.default.copyItem(at: tempUrl, to: permanentUrl)
+                    print("[NoBarier] Saved permanently to: \(permanentUrl.path)")
+                } catch {
+                    print("[NoBarier] Copy to Documents/NoBarier failed: \(error)")
+                }
+
+                let ext = permanentUrl.pathExtension.lowercased()
                 let isVideo = mimeType.starts(with: "video/") || ["mp4", "mov", "m4v", "mkv", "webm", "avi"].contains(ext)
                 let isPhoto = mimeType.starts(with: "image/") || ["jpg", "jpeg", "png", "webp", "gif", "heic"].contains(ext)
 
+                // 2. If Photo or Video: also save to Apple Photos album "NoBarier"
                 if isVideo || isPhoto {
-                    var localId: String?
-                    PHPhotoLibrary.shared().performChanges({
-                        let request = PHAssetCreationRequest.forAsset()
-                        let opt = PHAssetResourceCreationOptions()
-                        opt.originalFilename = fileName
-                        if isVideo {
-                            request.addResource(with: .video, fileURL: tempUrl, options: opt)
-                        } else {
-                            request.addResource(with: .photo, fileURL: tempUrl, options: opt)
-                        }
-                        localId = request.placeholderForCreatedAsset?.localIdentifier
-                    }) { success, error in
+                    saveToPhotosAlbum(fileUrl: permanentUrl, isVideo: isVideo) { success, localId, err in
                         try? FileManager.default.removeItem(at: tempUrl)
                         DispatchQueue.main.async {
-                            let errStr = error?.localizedDescription.replacingOccurrences(of: "'", with: "\\'") ?? ""
-                            let idStr = localId?.replacingOccurrences(of: "'", with: "\\'") ?? ""
-                            let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', \(success), '\(idStr)', '\(errStr)');"
+                            let idStr = (localId ?? permanentUrl.path).replacingOccurrences(of: "'", with: "\\'")
+                            let pathStr = permanentUrl.path.replacingOccurrences(of: "'", with: "\\'")
+                            let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', true, '\(idStr)', '', '\(pathStr)');"
                             self.webView?.evaluateJavaScript(js, completionHandler: nil)
                         }
                     }
                 } else {
-                    // Documents / Audio / Other files: Save to Documents directory (visible in Files app)
-                    if let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                        let targetUrl = docsDir.appendingPathComponent(fileName)
-                        try? FileManager.default.removeItem(at: targetUrl)
-                        do {
-                            try FileManager.default.moveItem(at: tempUrl, to: targetUrl)
-                            DispatchQueue.main.async {
-                                let pathStr = targetUrl.path.replacingOccurrences(of: "'", with: "\\'")
-                                let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', true, '\(pathStr)', '');"
-                                self.webView?.evaluateJavaScript(js, completionHandler: nil)
-                            }
-                        } catch {
-                            DispatchQueue.main.async {
-                                let errStr = error.localizedDescription.replacingOccurrences(of: "'", with: "\\'")
-                                let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', false, '', '\(errStr)');"
-                                self.webView?.evaluateJavaScript(js, completionHandler: nil)
-                            }
+                    // Document/Audio: already saved in Documents/NoBarier
+                    try? FileManager.default.removeItem(at: tempUrl)
+                    DispatchQueue.main.async {
+                        let pathStr = permanentUrl.path.replacingOccurrences(of: "'", with: "\\'")
+                        let js = "window.onNativeGalleryFinish && window.onNativeGalleryFinish('\(callbackId)', true, '\(pathStr)', '', '\(pathStr)');"
+                        self.webView?.evaluateJavaScript(js, completionHandler: nil)
+                    }
+                }
+            } else if action == "openFile" {
+                let fileName = dict["fileName"] as? String ?? ""
+                let filePath = dict["filePath"] as? String ?? ""
+                var targetUrl: URL?
+
+                if !filePath.isEmpty && FileManager.default.fileExists(atPath: filePath) {
+                    targetUrl = URL(fileURLWithPath: filePath)
+                } else if !fileName.isEmpty {
+                    let candidate = getNoBarierDirectory().appendingPathComponent(fileName)
+                    if FileManager.default.fileExists(atPath: candidate.path) {
+                        targetUrl = candidate
+                    }
+                }
+
+                if let url = targetUrl {
+                    DispatchQueue.main.async {
+                        self.activeDocController = UIDocumentInteractionController(url: url)
+                        self.activeDocController?.delegate = self
+                        if !self.activeDocController!.presentPreview(animated: true) {
+                            self.activeDocController!.presentOptionsMenu(from: self.view.bounds, in: self.view, animated: true)
                         }
+                    }
+                }
+            } else if action == "openFolder" {
+                DispatchQueue.main.async {
+                    let folderUrl = self.getNoBarierDirectory()
+                    self.activeDocController = UIDocumentInteractionController(url: folderUrl)
+                    self.activeDocController?.delegate = self
+                    self.activeDocController?.presentOptionsMenu(from: self.view.bounds, in: self.view, animated: true)
+                }
+            } else if action == "listFolderFiles" {
+                let callbackId = dict["callbackId"] as? String ?? ""
+                let dir = getNoBarierDirectory()
+                var fileItems: [[String: Any]] = []
+
+                if let enumerator = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) {
+                    for case let fileUrl as URL in enumerator {
+                        if !fileUrl.hasDirectoryPath {
+                            let values = try? fileUrl.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                            fileItems.append([
+                                "name": fileUrl.lastPathComponent,
+                                "path": fileUrl.path,
+                                "size": values?.fileSize ?? 0,
+                                "timestamp": (values?.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+                            ])
+                        }
+                    }
+                }
+
+                if let jsonData = try? JSONSerialization.data(withJSONObject: fileItems),
+                   let jsonStr = String(data: jsonData, encoding: .utf8) {
+                    let safeJson = jsonStr.replacingOccurrences(of: "'", with: "\\'")
+                    let js = "window.onNativeFileListResult && window.onNativeFileListResult('\(callbackId)', '\(safeJson)');"
+                    DispatchQueue.main.async {
+                        self.webView?.evaluateJavaScript(js, completionHandler: nil)
                     }
                 }
             } else if action == "deleteMedia" {
@@ -213,7 +288,16 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
                 let fileName = dict["fileName"] as? String ?? ""
                 let callbackId = dict["callbackId"] as? String ?? ""
 
-                if !localId.isEmpty {
+                // 1. Delete from custom Documents/NoBarier directory
+                if !fileName.isEmpty {
+                    let targetUrl = getNoBarierDirectory().appendingPathComponent(fileName)
+                    if FileManager.default.fileExists(atPath: targetUrl.path) {
+                        try? FileManager.default.removeItem(at: targetUrl)
+                    }
+                }
+
+                // 2. Delete from Photos album if localId exists
+                if !localId.isEmpty && !localId.hasPrefix("/") {
                     let assets = PHAsset.fetchAssets(withLocalIdentifiers: [localId], options: nil)
                     if assets.count > 0 {
                         PHPhotoLibrary.shared().performChanges({
@@ -229,18 +313,75 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
                     }
                 }
 
-                // Check Documents directory
-                if let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first, !fileName.isEmpty {
-                    let targetUrl = docsDir.appendingPathComponent(fileName)
-                    if FileManager.default.fileExists(atPath: targetUrl.path) {
-                        try? FileManager.default.removeItem(at: targetUrl)
-                    }
-                }
-
                 let js = "window.onNativeGalleryDelete && window.onNativeGalleryDelete('\(callbackId)', true, '');"
                 self.webView?.evaluateJavaScript(js, completionHandler: nil)
             }
             return
+        }
+    }
+
+    private func saveToPhotosAlbum(fileUrl: URL, isVideo: Bool, completion: @escaping (Bool, String?, String?) -> Void) {
+        let executeChanges = {
+            var createdAssetPlaceholder: PHObjectPlaceholder?
+
+            PHPhotoLibrary.shared().performChanges({
+                let creationRequest: PHAssetChangeRequest?
+                if isVideo {
+                    creationRequest = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileUrl)
+                } else {
+                    creationRequest = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileUrl)
+                }
+                
+                if let placeholder = creationRequest?.placeholderForCreatedAsset {
+                    createdAssetPlaceholder = placeholder
+                    
+                    // Fetch or create "NoBarier" album
+                    let fetchOptions = PHFetchOptions()
+                    fetchOptions.predicate = NSPredicate(format: "title = %@", "NoBarier")
+                    let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+                    
+                    let albumChangeRequest: PHAssetCollectionChangeRequest?
+                    if let existingAlbum = collections.firstObject {
+                        albumChangeRequest = PHAssetCollectionChangeRequest(for: existingAlbum)
+                    } else {
+                        albumChangeRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: "NoBarier")
+                    }
+                    albumChangeRequest?.addAssets([placeholder] as NSArray)
+                }
+            }) { success, error in
+                completion(success, createdAssetPlaceholder?.localIdentifier, error?.localizedDescription)
+            }
+        }
+
+        let status: PHAuthorizationStatus
+        if #available(iOS 14.0, *) {
+            status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        } else {
+            status = PHPhotoLibrary.authorizationStatus()
+        }
+
+        if status == .authorized || status == .limited {
+            executeChanges()
+        } else if status == .notDetermined {
+            if #available(iOS 14.0, *) {
+                PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
+                    if newStatus == .authorized || newStatus == .limited {
+                        executeChanges()
+                    } else {
+                        completion(false, nil, "Photos access not granted")
+                    }
+                }
+            } else {
+                PHPhotoLibrary.requestAuthorization { newStatus in
+                    if newStatus == .authorized {
+                        executeChanges()
+                    } else {
+                        completion(false, nil, "Photos access not granted")
+                    }
+                }
+            }
+        } else {
+            completion(false, nil, "Photos access denied")
         }
     }
 
@@ -264,7 +405,6 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
     }
 }
 
-
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
@@ -286,4 +426,3 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         SceneDelegateProxy.shared.scene(scene, continue: userActivity)
     }
 }
-

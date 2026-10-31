@@ -297,6 +297,106 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
+        @JavascriptInterface
+        public String openFile(String uriOrPath, String fileName, String mimeType) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                Uri fileUri = null;
+
+                if (uriOrPath != null && uriOrPath.startsWith("content://")) {
+                    fileUri = Uri.parse(uriOrPath);
+                } else if (uriOrPath != null && uriOrPath.startsWith("/")) {
+                    File file = new File(uriOrPath);
+                    if (file.exists()) {
+                        fileUri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", file);
+                    }
+                }
+
+                // If uri not resolved yet, check standard NoBarier locations
+                if (fileUri == null && fileName != null && !fileName.isEmpty()) {
+                    File[] candidates = new File[]{
+                        new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES) + "/NoBarier", fileName),
+                        new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES) + "/NoBarier", fileName),
+                        new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) + "/NoBarier", fileName),
+                        new File(context.getExternalFilesDir(null), fileName)
+                    };
+                    for (File cand : candidates) {
+                        if (cand.exists()) {
+                            fileUri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", cand);
+                            break;
+                        }
+                    }
+                }
+
+                if (fileUri != null) {
+                    String mime = (mimeType != null && !mimeType.isEmpty()) ? mimeType : "*/*";
+                    intent.setDataAndType(fileUri, mime);
+                    context.startActivity(intent);
+                    JSONObject res = new JSONObject();
+                    res.put("success", true);
+                    return res.toString();
+                }
+
+                return errorJson("File tidak ditemukan di memori perangkat.");
+            } catch (Exception e) {
+                Log.e(BRIDGE_TAG, "openFile error: " + e.getMessage(), e);
+                return errorJson(e.getMessage());
+            }
+        }
+
+        @JavascriptInterface
+        public String openFolder() {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "NoBarier");
+                if (!dir.exists()) dir.mkdirs();
+                Uri uri = androidx.core.content.FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", dir);
+                intent.setDataAndType(uri, "*/*");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                context.startActivity(intent);
+                JSONObject res = new JSONObject();
+                res.put("success", true);
+                return res.toString();
+            } catch (Exception e) {
+                return errorJson(e.getMessage());
+            }
+        }
+
+        @JavascriptInterface
+        public String listFolderFiles() {
+            try {
+                org.json.JSONArray list = new org.json.JSONArray();
+                File[] dirs = new File[]{
+                    new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "NoBarier"),
+                    new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "NoBarier"),
+                    new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "NoBarier")
+                };
+                for (File dir : dirs) {
+                    if (dir.exists() && dir.isDirectory()) {
+                        File[] files = dir.listFiles();
+                        if (files != null) {
+                            for (File f : files) {
+                                if (f.isFile()) {
+                                    JSONObject item = new JSONObject();
+                                    item.put("name", f.getName());
+                                    item.put("path", f.getAbsolutePath());
+                                    item.put("size", f.length());
+                                    item.put("timestamp", f.lastModified());
+                                    list.put(item);
+                                }
+                            }
+                        }
+                    }
+                }
+                return list.toString();
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
         private boolean hasExtension(String name, String... exts) {
             if (name == null) return false;
             String lower = name.toLowerCase();

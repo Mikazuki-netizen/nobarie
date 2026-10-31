@@ -17,12 +17,16 @@ import {
 } from 'lucide-react';
 import { formatBytes, getFileCategory } from '../utils/format';
 
+import { openFileOnDevice, downloadFileLocally, isNativeBridgeActive } from '../utils/gallery';
+
 export const TransferCompleteScreen: React.FC = () => {
-  const { session, transferredFiles, resetTransferState, setScreen } = useFlux();
+  const { session, transferredFiles, resetTransferState, setScreen, device } = useFlux();
   const [isZipping, setIsZipping] = useState(false);
 
   const isReceiver = session.role === 'receiver';
   const totalSize = transferredFiles.reduce((acc, f) => acc + f.size, 0);
+  const platform = isNativeBridgeActive();
+  const isIos = platform === 'ios' || device.platform === 'iOS';
 
   const renderIconForCategory = (cat: string) => {
     switch (cat) {
@@ -37,6 +41,16 @@ export const TransferCompleteScreen: React.FC = () => {
       default:
         return <Files className="w-5 h-5 text-gray-500" />;
     }
+  };
+
+  const handleOpenFile = async (file: any) => {
+    await openFileOnDevice({
+      name: file.name,
+      localId: file.localId,
+      path: file.path,
+      type: file.type,
+      downloadUrl: file.downloadUrl,
+    });
   };
 
   const handleDownloadAllZip = async () => {
@@ -71,14 +85,12 @@ export const TransferCompleteScreen: React.FC = () => {
   };
 
   const handleDownloadSingle = (item: any) => {
-    if (item.downloadUrl) {
-      const link = document.createElement('a');
-      link.href = item.downloadUrl;
-      link.download = item.name;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
+    downloadFileLocally({
+      name: item.name,
+      blob: item.blob,
+      downloadUrl: item.downloadUrl,
+      type: item.type,
+    });
   };
 
   return (
@@ -93,14 +105,16 @@ export const TransferCompleteScreen: React.FC = () => {
         <h1 className="text-2xl font-bold tracking-tight text-flux-primary mb-1">
           {isReceiver ? 'File Berhasil Diterima!' : 'Transfer Selesai!'}
         </h1>
-        <p className="text-xs sm:text-sm text-flux-secondary text-center mb-6">
+        <p className="text-xs sm:text-sm text-flux-secondary text-center mb-4">
           {isReceiver
-            ? 'File otomatis tersimpan langsung ke Galeri Foto & Memori HP Anda.'
+            ? isIos
+              ? 'Tersimpan di Aplikasi File (Di iPhone Saya > NoBarier) & Album Foto NoBarier.'
+              : 'Tersimpan otomatis di Galeri HP & Memori Internal NoBarier.'
             : 'Semua file berhasil dikirim dan diverifikasi.'}
         </p>
 
         {/* Summary Pill */}
-        <div className="w-full p-3.5 rounded-2xl bg-flux-surface-subtle border border-flux-border flex items-center justify-between text-xs text-flux-secondary mb-6">
+        <div className="w-full p-3.5 rounded-2xl bg-flux-surface-subtle border border-flux-border flex items-center justify-between text-xs text-flux-secondary mb-4">
           <div className="flex items-center space-x-2">
             <ShieldCheck className="w-4 h-4 text-flux-success" />
             <span className="font-semibold text-flux-primary">SHA-256 Terverifikasi</span>
@@ -135,7 +149,7 @@ export const TransferCompleteScreen: React.FC = () => {
                           <span>•</span>
                           <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center">
                             <CheckCircle2 className="w-3 h-3 mr-0.5 inline" />
-                            Tersimpan di Galeri
+                            Tersimpan
                           </span>
                         </>
                       )}
@@ -143,29 +157,24 @@ export const TransferCompleteScreen: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Receiver Download Button */}
-                {isReceiver && file.downloadUrl && (
+                {/* Receiver Actions */}
+                {isReceiver && (
                   <div className="flex items-center space-x-1 shrink-0 ml-2">
                     <button
+                      onClick={() => handleOpenFile(file)}
+                      className="p-2 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent transition-colors text-xs font-semibold flex items-center space-x-1 shadow-subtle"
+                      title="Buka / Putar File"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Buka</span>
+                    </button>
+                    <button
                       onClick={() => handleDownloadSingle(file)}
-                      className="p-2 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent transition-colors text-xs font-semibold flex items-center space-x-1"
-                      title="Simpan file manual"
+                      className="p-2 rounded-xl bg-flux-surface-subtle border border-flux-border text-flux-secondary hover:text-flux-primary transition-colors text-xs font-semibold"
+                      title="Unduh file"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Unduh</span>
                     </button>
-                    {/* For images / videos on iOS Safari: open in tab for long-press 'Save to Photos' */}
-                    {['Photos', 'Videos'].includes(cat) && (
-                      <a
-                        href={file.downloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-2 rounded-xl bg-flux-surface-subtle text-flux-secondary hover:text-flux-primary transition-colors"
-                        title="Buka pratinjau"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                    )}
                   </div>
                 )}
               </div>

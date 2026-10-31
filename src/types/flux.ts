@@ -84,6 +84,8 @@ export interface HistoryFileItem {
   type: string;
   savedToGallery?: boolean;
   localId?: string;
+  path?: string;
+  downloadUrl?: string;
   deletedFromDevice?: boolean;
 }
 

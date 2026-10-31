@@ -1,8 +1,10 @@
 /**
  * Gallery & Storage Bridge for NoBarier
  * Supports:
- * - Apple iOS Photos & Documents via native WKScriptMessageHandler ('nativeGallery')
+ * - Apple iOS Photos & Custom Documents/NoBarier folder via native WKScriptMessageHandler ('nativeGallery')
  * - Android Gallery & MediaStore via @JavascriptInterface ('AndroidGallery')
+ * - QuickLook preview / Document Interaction controller on iOS
+ * - Native File Intent viewer on Android
  * - Web / Desktop Browser download fallback
  */
 
@@ -14,6 +16,9 @@ declare global {
       appendChunk: (transferId: string, base64Chunk: string) => string;
       finishFile: (transferId: string) => string;
       deleteMedia: (uriOrPath: string, fileName: string) => string;
+      openFile: (uriOrPath: string, fileName: string, mimeType: string) => string;
+      openFolder: () => string;
+      listFolderFiles: () => string;
     };
     webkit?: {
       messageHandlers?: {
@@ -22,8 +27,9 @@ declare global {
         };
       };
     };
-    onNativeGalleryFinish?: (callbackId: string, success: boolean, localId: string, error: string) => void;
+    onNativeGalleryFinish?: (callbackId: string, success: boolean, localId: string, error: string, path?: string) => void;
     onNativeGalleryDelete?: (callbackId: string, success: boolean, error: string) => void;
+    onNativeFileListResult?: (callbackId: string, jsonList: string) => void;
   }
 }
 
@@ -59,7 +65,7 @@ export function isNativeBridgeActive(): 'android' | 'ios' | 'web' {
 }
 
 /**
- * Automatically saves received file directly to device Native Gallery (Apple Photos / Android MediaStore)
+ * Automatically saves received file directly to device Native Gallery and custom NoBarier folder
  */
 export async function saveFileToNativeGallery(file: {
   name: string;
@@ -67,7 +73,7 @@ export async function saveFileToNativeGallery(file: {
   downloadUrl?: string;
   type: string;
   onProgress?: (percent: number) => void;
-}): Promise<{ success: boolean; localId?: string; error?: string }> {
+}): Promise<{ success: boolean; localId?: string; path?: string; error?: string }> {
   try {
     let blob = file.blob;
     if (!blob && file.downloadUrl) {
@@ -125,23 +131,24 @@ export async function saveFileToNativeGallery(file: {
       return {
         success: true,
         localId: finishRes.uri || finishRes.path || transferId,
+        path: finishRes.path,
       };
     }
 
-    // --- 2. APPLE IOS PHAsset / PHOTOS BRIDGE ---
+    // --- 2. APPLE IOS PHAsset / PHOTOS / DOCUMENTS BRIDGE ---
     if (platform === 'ios' && window.webkit?.messageHandlers?.nativeGallery) {
       const callbackId = crypto.randomUUID();
 
-      const finishPromise = new Promise<{ success: boolean; localId?: string; error?: string }>(
+      const finishPromise = new Promise<{ success: boolean; localId?: string; path?: string; error?: string }>(
         (resolve) => {
           const timeout = setTimeout(() => {
             resolve({ success: false, error: 'iOS native gallery save timeout' });
           }, 60000);
 
-          window.onNativeGalleryFinish = (cbId, success, localId, error) => {
+          window.onNativeGalleryFinish = (cbId, success, localId, error, path) => {
             if (cbId === callbackId) {
               clearTimeout(timeout);
-              resolve({ success, localId, error });
+              resolve({ success, localId, path, error });
             }
           };
         }
@@ -173,7 +180,7 @@ export async function saveFileToNativeGallery(file: {
         }
       }
 
-      // Finish streaming and write to PHPhotoLibrary / Documents
+      // Finish streaming and write to Documents/NoBarier & Photos album
       window.webkit.messageHandlers.nativeGallery.postMessage({
         action: 'finishFile',
         transferId,
@@ -198,6 +205,136 @@ export async function saveFileToNativeGallery(file: {
   } catch (err: any) {
     console.error('[GalleryBridge] save error:', err);
     return { success: false, error: err.message || 'Failed to save to gallery' };
+  }
+}
+
+/**
+ * Opens and previews/plays a file on the device
+ */
+export async function openFileOnDevice(file: {
+  name: string;
+  localId?: string;
+  path?: string;
+  type?: string;
+  downloadUrl?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const platform = isNativeBridgeActive();
+
+    // Android
+    if (platform === 'android' && window.AndroidGallery?.openFile) {
+      const resStr = window.AndroidGallery.openFile(file.localId || file.path || '', file.name, file.type || '');
+      const res = JSON.parse(resStr);
+      return { success: !!res.success, error: res.error };
+    }
+
+    // iOS QuickLook Preview & Share Sheet
+    if (platform === 'ios' && window.webkit?.messageHandlers?.nativeGallery) {
+      window.webkit.messageHandlers.nativeGallery.postMessage({
+        action: 'openFile',
+        fileName: file.name,
+        filePath: file.path || file.localId || '',
+      });
+      return { success: true };
+    }
+
+    // Web Fallback
+    if (file.downloadUrl) {
+      window.open(file.downloadUrl, '_blank');
+      return { success: true };
+    }
+
+    return { success: false, error: 'Preview not supported in this browser' };
+  } catch (err: any) {
+    console.error('[GalleryBridge] openFile error:', err);
+    return { success: false, error: err.message || 'Failed to open file' };
+  }
+}
+
+/**
+ * Opens the NoBarier folder in the device file manager
+ */
+export async function openNoBarierFolder(): Promise<{ success: boolean; error?: string }> {
+  try {
+    const platform = isNativeBridgeActive();
+
+    if (platform === 'android' && window.AndroidGallery?.openFolder) {
+      window.AndroidGallery.openFolder();
+      return { success: true };
+    }
+
+    if (platform === 'ios' && window.webkit?.messageHandlers?.nativeGallery) {
+      window.webkit.messageHandlers.nativeGallery.postMessage({
+        action: 'openFolder',
+      });
+      return { success: true };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Lists all files stored in the NoBarier directory on the device
+ */
+export async function listDeviceFiles(): Promise<Array<{ name: string; size: number; timestamp?: number; path?: string }>> {
+  try {
+    const platform = isNativeBridgeActive();
+
+    if (platform === 'android' && window.AndroidGallery?.listFolderFiles) {
+      const listStr = window.AndroidGallery.listFolderFiles();
+      return JSON.parse(listStr);
+    }
+
+    if (platform === 'ios' && window.webkit?.messageHandlers?.nativeGallery) {
+      const callbackId = crypto.randomUUID();
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve([]), 5000);
+        window.onNativeFileListResult = (cbId, jsonList) => {
+          if (cbId === callbackId) {
+            clearTimeout(timeout);
+            try {
+              resolve(JSON.parse(jsonList));
+            } catch {
+              resolve([]);
+            }
+          }
+        };
+        window.webkit.messageHandlers.nativeGallery.postMessage({
+          action: 'listFolderFiles',
+          callbackId,
+        });
+      });
+    }
+
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Downloads a file locally to user storage
+ */
+export function downloadFileLocally(file: { name: string; blob?: Blob; downloadUrl?: string; type?: string }) {
+  if (file.downloadUrl) {
+    const link = document.createElement('a');
+    link.href = file.downloadUrl;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } else if (file.blob) {
+    const url = URL.createObjectURL(file.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 }
 

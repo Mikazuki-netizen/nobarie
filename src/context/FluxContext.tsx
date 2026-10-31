@@ -543,6 +543,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ...received,
           savedToGallery,
           localId,
+          downloadUrl: received.downloadUrl,
         };
 
         setTransferredFiles((prev) => {
@@ -565,6 +566,8 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
             type: received.type,
             savedToGallery,
             localId,
+            path: saveRes?.path,
+            downloadUrl: received.downloadUrl,
           }],
           totalSize: received.size,
           peerName: session.peerDevice?.name || 'Sender',
@@ -622,6 +625,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const onWebrtcFileReceived = async (file: FileItem) => {
       // Auto-save received file directly to device Gallery (Apple Photos / Android MediaStore)
       let localId: string | undefined;
+      let path: string | undefined;
       let savedToGallery = false;
       try {
         const saveRes = await saveFileToNativeGallery({
@@ -633,7 +637,8 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (saveRes.success) {
           savedToGallery = true;
           localId = saveRes.localId;
-          console.log('[Gallery] WebRTC file auto-saved to gallery:', file.name, localId);
+          path = saveRes.path;
+          console.log('[Gallery] WebRTC file auto-saved to gallery:', file.name, localId, path);
         }
       } catch (saveErr) {
         console.warn('[Gallery] Auto-save error:', saveErr);
@@ -644,6 +649,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
         savedToGallery,
         localId,
       };
+      (finalFile as any).path = path;
 
       setTransferredFiles((prev) => [...prev, finalFile]);
     };
@@ -665,6 +671,8 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
               type: f.type,
               savedToGallery: f.savedToGallery,
               localId: f.localId,
+              path: (f as any).path,
+              downloadUrl: f.downloadUrl,
             }))
           : incomingFiles.map((f) => ({
               name: f.name,
