@@ -1,5 +1,24 @@
 import UIKit
+import WebKit
 import Capacitor
+import AVFoundation
+
+class MainViewController: CAPBridgeViewController, WKUIDelegate {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        // Request camera access explicitly at native iOS level
+        AVCaptureDevice.requestAccess(for: .video) { granted in
+            print("[NoBarier] Camera permission status: \(granted)")
+        }
+    }
+
+    @available(iOS 15.0, *)
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(.grant)
+    }
+}
+
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -8,7 +27,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = CAPBridgeViewController()
+        window?.rootViewController = MainViewController()
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
@@ -22,3 +41,4 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         SceneDelegateProxy.shared.scene(scene, continue: userActivity)
     }
 }
+

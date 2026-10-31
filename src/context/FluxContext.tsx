@@ -242,16 +242,34 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
+    const onConnectedSender = ({ sessionId, receiverDevice }: { sessionId: string; receiverDevice?: DeviceInfo }) => {
+      setSession((prev) => ({
+        ...prev,
+        sessionId,
+        connected: true,
+        peerDevice: receiverDevice || prev.peerDevice || null,
+      }));
+      sounds.playConnect();
+
+      // Sender immediately initiates WebRTC offer
+      webrtc.init('sender');
+      webrtc.createOffer().then((offer) => {
+        signaling.sendSignal({ sdp: offer });
+      }).catch((err) => {
+        console.error('[WebRTC] Failed to create offer:', err);
+      });
+    };
+
     const onPeerJoined = ({ role, device: peerDev }: { role: 'sender' | 'receiver'; device?: DeviceInfo }) => {
       setSession((prev) => ({
         ...prev,
         connected: true,
-        peerDevice: peerDev || null,
+        peerDevice: peerDev || prev.peerDevice || null,
       }));
       sounds.playConnect();
 
       // If this client is sender, initiate WebRTC offer
-      if (session.role === 'sender') {
+      if (session.role === 'sender' || role === 'receiver') {
         webrtc.init('sender');
         webrtc.createOffer().then((offer) => {
           signaling.sendSignal({ sdp: offer });
@@ -426,6 +444,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Attach signaling listeners
     signaling.on('signal', onSignal);
+    signaling.on('connectedSender', onConnectedSender);
     signaling.on('peerJoined', onPeerJoined);
     signaling.on('peerDisconnected', onPeerDisconnected);
     signaling.on('offerFiles', onOfferFiles);
@@ -473,6 +492,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => {
       signaling.off('signal', onSignal);
+      signaling.off('connectedSender', onConnectedSender);
       signaling.off('peerJoined', onPeerJoined);
       signaling.off('peerDisconnected', onPeerDisconnected);
       signaling.off('offerFiles', onOfferFiles);

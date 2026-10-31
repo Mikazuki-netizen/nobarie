@@ -77,30 +77,70 @@ export const PairingScreen: React.FC = () => {
     try {
       setCameraError(null);
 
-      if (!scannerRef.current) {
-        scannerRef.current = new Html5Qrcode(qrRegionId);
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera is not supported or restricted in this environment.');
       }
+
+      // Properly clean up previous instance if any
+      if (scannerRef.current) {
+        try {
+          if (scannerRef.current.isScanning) {
+            await scannerRef.current.stop();
+          }
+          await scannerRef.current.clear();
+        } catch {
+          // Ignore
+        }
+        scannerRef.current = null;
+      }
+
+      const scanner = new Html5Qrcode(qrRegionId);
+      scannerRef.current = scanner;
 
       const config: Html5QrcodeCameraScanConfig = {
         fps: 15,
-        qrbox: { width: 250, height: 250 },
+        qrbox: { width: 240, height: 240 },
         aspectRatio: 1.0,
       };
 
-      await scannerRef.current.start(
+      // Try camera ID first for iOS rear camera selection
+      try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (cameras && cameras.length > 0) {
+          const rearCam = cameras.find((c) => {
+            const label = c.label.toLowerCase();
+            return label.includes('back') || label.includes('rear') || label.includes('environment');
+          }) || cameras[cameras.length - 1];
+
+          await scanner.start(
+            mode === 'environment' ? rearCam.id : { facingMode: 'user' },
+            config,
+            handleScanSuccess,
+            () => {}
+          );
+          setScannerStarted(true);
+          return;
+        }
+      } catch (camErr) {
+        console.warn('[Camera] getCameras failed, fallback to facingMode:', camErr);
+      }
+
+      // Fallback to facingMode constraint
+      await scanner.start(
         { facingMode: mode },
         config,
         handleScanSuccess,
-        () => {
-          // Frame callback without QR detection (silent)
-        }
+        () => {}
       );
 
       setScannerStarted(true);
     } catch (err: any) {
       console.warn('Camera start error:', err);
+      const msg = err?.message || 'Unable to open camera';
       setCameraError(
-        'Unable to access camera. Please allow camera permissions in browser settings, or enter the 6-digit code manually.'
+        msg.includes('NotAllowedError') || msg.includes('Permission')
+          ? 'Camera permission denied. Please allow Camera access in iPhone Settings > NoBarier, or enter the 6-digit code manually.'
+          : `Camera could not start (${msg}). Please enter the 6-digit code manually.`
       );
       setScannerStarted(false);
     }
@@ -108,13 +148,16 @@ export const PairingScreen: React.FC = () => {
 
   // Stop scanner on unmount or tab switch
   const stopCamera = async () => {
-    if (scannerRef.current && scannerStarted) {
+    if (scannerRef.current) {
       try {
-        await scannerRef.current.stop();
-        setScannerStarted(false);
+        if (scannerRef.current.isScanning) {
+          await scannerRef.current.stop();
+        }
+        await scannerRef.current.clear();
       } catch {
         // Ignore
       }
+      setScannerStarted(false);
     }
   };
 
@@ -224,9 +267,24 @@ export const PairingScreen: React.FC = () => {
   // If connected, show connected banner and trigger file transfer approval request
   useEffect(() => {
     if (session.connected && session.role === 'sender') {
+      setIsConnecting(false);
       startTransfer();
     }
   }, [session.connected, session.role, startTransfer]);
+
+  // Safety connection timeout to prevent infinite stuck spinner
+  useEffect(() => {
+    let timer: any;
+    if (isConnecting) {
+      timer = setTimeout(() => {
+        setIsConnecting(false);
+        setErrorMessage('Connection timed out. Please verify the 6-digit code or check that the receiver is still on the receive screen.');
+      }, 15000);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [isConnecting, setErrorMessage]);
 
   return (
     <div className="w-full max-w-md mx-auto px-4 py-6 sm:py-8 flex flex-col items-center animate-fade-in">

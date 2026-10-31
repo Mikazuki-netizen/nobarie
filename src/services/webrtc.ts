@@ -91,13 +91,15 @@ export class WebRTCManager {
         this.setupDataChannel(this.dc);
       };
     }
+  }
 
-    // Set 12s timeout for ICE connection before offering relay fallback
+  private startIceTimeout() {
+    this.clearIceTimeout();
     this.iceTimeout = setTimeout(() => {
       if (!this.isConnected) {
         this.emit('fallbackToRelay', 'P2P negotiation timed out. Switching to relay fallback.');
       }
-    }, 12000);
+    }, 15000);
   }
 
   private clearIceTimeout() {
@@ -238,6 +240,7 @@ export class WebRTCManager {
 
   async createOffer(): Promise<RTCSessionDescriptionInit> {
     if (!this.pc) throw new Error('PeerConnection not initialized');
+    this.startIceTimeout();
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
     return offer;
@@ -245,6 +248,7 @@ export class WebRTCManager {
 
   async handleOffer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
     if (!this.pc) throw new Error('PeerConnection not initialized');
+    this.startIceTimeout();
     await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);

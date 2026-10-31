@@ -4,12 +4,11 @@ import {
   ArrowLeft,
   Smartphone,
   ShieldCheck,
-  Moon,
   Volume2,
   Vibrate,
-  Info,
   Check,
   Zap,
+  Pencil,
 } from 'lucide-react';
 
 export const SettingsScreen: React.FC = () => {
@@ -17,11 +16,45 @@ export const SettingsScreen: React.FC = () => {
   const [nameInput, setNameInput] = useState(device.name);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const handleSaveName = (e: React.FormEvent) => {
-    e.preventDefault();
-    updateDeviceName(nameInput);
+  const [serverUrl, setServerUrl] = useState(
+    () => localStorage.getItem('flux_server_url') || 'https://compared-wrist-pin-repository.trycloudflare.com'
+  );
+  const [serverSavedSuccess, setServerSavedSuccess] = useState(false);
+
+  const handleSaveName = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!nameInput.trim()) return;
+    updateDeviceName(nameInput.trim());
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
+  };
+
+  const handlePromptName = () => {
+    const val = window.prompt('Ubah Nama Perangkat (Device Name):', nameInput);
+    if (val !== null && val.trim()) {
+      setNameInput(val.trim());
+      updateDeviceName(val.trim());
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 2000);
+    }
+  };
+
+  const handleSaveServer = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!serverUrl.trim()) return;
+    localStorage.setItem('flux_server_url', serverUrl.trim());
+    setServerSavedSuccess(true);
+    setTimeout(() => setServerSavedSuccess(false), 2000);
+  };
+
+  const handlePromptServer = () => {
+    const val = window.prompt('Ubah Signaling & Relay Server URL:', serverUrl);
+    if (val !== null && val.trim()) {
+      setServerUrl(val.trim());
+      localStorage.setItem('flux_server_url', val.trim());
+      setServerSavedSuccess(true);
+      setTimeout(() => setServerSavedSuccess(false), 2000);
+    }
   };
 
   return (
@@ -49,9 +82,19 @@ export const SettingsScreen: React.FC = () => {
 
       {/* Device Name Form */}
       <div className="p-5 rounded-3xl bg-flux-surface border border-flux-border shadow-subtle mb-6">
-        <div className="flex items-center space-x-2.5 mb-3">
-          <Smartphone className="w-5 h-5 text-flux-accent" />
-          <h2 className="text-sm font-semibold text-flux-primary">Device Name</h2>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center space-x-2.5">
+            <Smartphone className="w-5 h-5 text-flux-accent" />
+            <h2 className="text-sm font-semibold text-flux-primary">Device Name</h2>
+          </div>
+          <button
+            onClick={handlePromptName}
+            className="p-1.5 px-2.5 rounded-lg bg-flux-surface-subtle hover:bg-flux-border text-flux-accent text-xs font-semibold flex items-center space-x-1 transition-colors"
+            title="Edit with native keyboard"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            <span>Edit</span>
+          </button>
         </div>
         <p className="text-xs text-flux-secondary mb-4">
           This name is visible to paired devices during connection.
@@ -64,11 +107,11 @@ export const SettingsScreen: React.FC = () => {
             onChange={(e) => setNameInput(e.target.value)}
             placeholder="e.g. Yahya's iPhone"
             maxLength={32}
-            className="flex-1 py-2.5 px-4 rounded-xl bg-flux-surface-subtle border border-flux-border text-sm font-medium text-flux-primary focus:border-flux-accent focus:outline-none transition-colors"
+            className="flex-1 py-3 px-4 rounded-xl bg-flux-surface-subtle border border-flux-border text-base font-medium text-flux-primary focus:border-flux-accent focus:outline-none transition-colors"
           />
           <button
             type="submit"
-            className="py-2.5 px-4 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent text-xs font-semibold transition-colors flex items-center space-x-1 shrink-0"
+            className="py-3 px-4 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent text-xs font-semibold transition-colors flex items-center space-x-1 shrink-0"
           >
             {savedSuccess ? (
               <>
@@ -84,29 +127,45 @@ export const SettingsScreen: React.FC = () => {
 
       {/* Server URL Configuration */}
       <div className="p-5 rounded-3xl bg-flux-surface border border-flux-border shadow-subtle mb-6">
-        <div className="flex items-center space-x-2.5 mb-2">
-          <Zap className="w-5 h-5 text-flux-accent" />
-          <h2 className="text-sm font-semibold text-flux-primary">Signaling & Relay Server</h2>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-2.5">
+            <Zap className="w-5 h-5 text-flux-accent" />
+            <h2 className="text-sm font-semibold text-flux-primary">Signaling & Relay Server</h2>
+          </div>
+          <button
+            onClick={handlePromptServer}
+            className="p-1.5 px-2.5 rounded-lg bg-flux-surface-subtle hover:bg-flux-border text-flux-accent text-xs font-semibold flex items-center space-x-1 transition-colors"
+            title="Edit with native keyboard"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            <span>Edit</span>
+          </button>
         </div>
         <p className="text-xs text-flux-secondary mb-3">
-          Address used for QR signaling and fallback transfer. On iOS apps, use your host Mac's Wi-Fi IP.
+          Cloudflare Tunnel or LAN server address for QR pairing and transfer.
         </p>
-        <div className="flex items-center space-x-2">
+        <form onSubmit={handleSaveServer} className="flex items-center space-x-2">
           <input
             type="text"
-            defaultValue={localStorage.getItem('flux_server_url') || 'http://10.0.10.20:3001'}
-            placeholder="http://10.0.10.20:3001"
-            onBlur={(e) => {
-              const val = e.target.value.trim();
-              if (val) {
-                localStorage.setItem('flux_server_url', val);
-              } else {
-                localStorage.removeItem('flux_server_url');
-              }
-            }}
-            className="flex-1 py-2 px-3 rounded-xl bg-flux-surface-subtle border border-flux-border text-xs font-mono text-flux-primary focus:border-flux-accent focus:outline-none transition-colors"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder="https://compared-wrist-pin-repository.trycloudflare.com"
+            className="flex-1 py-3 px-3 rounded-xl bg-flux-surface-subtle border border-flux-border text-base font-mono text-flux-primary focus:border-flux-accent focus:outline-none transition-colors"
           />
-        </div>
+          <button
+            type="submit"
+            className="py-3 px-4 rounded-xl bg-flux-primary text-flux-surface hover:bg-flux-accent text-xs font-semibold transition-colors flex items-center space-x-1 shrink-0"
+          >
+            {serverSavedSuccess ? (
+              <>
+                <Check className="w-4 h-4 text-flux-success" />
+                <span>Saved</span>
+              </>
+            ) : (
+              <span>Save</span>
+            )}
+          </button>
+        </form>
       </div>
 
       {/* Transfer Preferences */}

@@ -8,7 +8,7 @@ export function getServerUrl(): string {
 
   // When running natively on iOS device (via Xcode install)
   if (Capacitor.isNativePlatform()) {
-    return 'http://10.0.10.20:3001';
+    return 'https://compared-wrist-pin-repository.trycloudflare.com';
   }
 
   // When running in standard web browser

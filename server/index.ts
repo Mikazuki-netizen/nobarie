@@ -347,6 +347,13 @@ wss.on('connection', (ws) => {
             receiverDevice: session.receiver.device,
           }));
 
+          // Also notify sender that peer (receiver) is joined
+          ws.send(JSON.stringify({
+            type: 'PEER_JOINED',
+            role: 'receiver',
+            device: session.receiver.device,
+          }));
+
           // Notify receiver that sender joined
           if (session.receiver.ws && session.receiver.ws.readyState === WebSocket.OPEN) {
             session.receiver.ws.send(JSON.stringify({
