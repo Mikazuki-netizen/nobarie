@@ -32,6 +32,11 @@
 	<string>NoBarier requires microphone access for media capabilities.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>NoBarier communicates over the local Wi-Fi network to transfer files directly between devices.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nobarier._tcp</string>
+		<string>_http._tcp</string>
+	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>NoBarier saves received photos and videos to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

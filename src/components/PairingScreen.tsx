@@ -50,13 +50,13 @@ export const PairingScreen: React.FC = () => {
             setTargetServerUrl(wifi.url);
           }
         }
-        if (wifi.code) {
-          setConnectionStatusText('Memasangkan kode 6-digit...');
-          await connectWithCode(wifi.code);
-          return;
-        } else if (wifi.sid && wifi.token) {
+        if (wifi.sid && wifi.token) {
           setConnectionStatusText('Membuat koneksi langsung...');
           await connectToSession(wifi.sid, wifi.token);
+          return;
+        } else if (wifi.code) {
+          setConnectionStatusText('Memasangkan kode 6-digit...');
+          await connectWithCode(wifi.code);
           return;
         }
 
@@ -127,7 +127,17 @@ export const PairingScreen: React.FC = () => {
         throw new Error('Camera is not supported or restricted in this environment.');
       }
 
-      // Properly clean up previous instance if any
+      // Pre-flight camera permission explicitly to prompt native iOS dialog if needed
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: mode },
+        });
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (permErr: any) {
+        console.warn('[Camera] Permission pre-flight:', permErr);
+      }
+
+      // Clean up previous scanner instance
       if (scannerRef.current) {
         try {
           if (scannerRef.current.isScanning) {
@@ -140,37 +150,76 @@ export const PairingScreen: React.FC = () => {
         scannerRef.current = null;
       }
 
+      // Setup MutationObserver on container to enforce iOS inline playback instantly
+      const container = document.getElementById(qrRegionId);
+      if (container) {
+        const observer = new MutationObserver(() => {
+          const videoEl = container.querySelector<HTMLVideoElement>('video');
+          if (videoEl) {
+            videoEl.setAttribute('autoplay', 'true');
+            videoEl.setAttribute('playsinline', 'true');
+            videoEl.setAttribute('webkit-playsinline', 'true');
+            videoEl.setAttribute('muted', 'true');
+            videoEl.muted = true;
+            videoEl.style.width = '100%';
+            videoEl.style.height = '100%';
+            videoEl.style.objectFit = 'cover';
+            videoEl.play().catch(() => {});
+          }
+        });
+        observer.observe(container, { childList: true, subtree: true });
+      }
+
       const scanner = new Html5Qrcode(qrRegionId);
       scannerRef.current = scanner;
 
+      // Select exact camera device ID if available
+      let cameraTarget: any = { facingMode: mode };
+      try {
+        const devices = await Html5Qrcode.getCameras();
+        if (devices && devices.length > 0) {
+          if (mode === 'environment') {
+            const backCam =
+              devices.find((d) => {
+                const label = d.label.toLowerCase();
+                return (
+                  label.includes('back') ||
+                  label.includes('rear') ||
+                  label.includes('environment') ||
+                  label.includes('belakang')
+                );
+              }) || devices[devices.length - 1];
+            cameraTarget = backCam.id;
+          } else {
+            const frontCam =
+              devices.find((d) => {
+                const label = d.label.toLowerCase();
+                return label.includes('front') || label.includes('user') || label.includes('depan');
+              }) || devices[0];
+            cameraTarget = frontCam.id;
+          }
+        }
+      } catch {
+        // Fall back to facingMode constraint
+      }
+
       const config: Html5QrcodeCameraScanConfig = {
-        fps: 15,
-        qrbox: { width: 240, height: 240 },
+        fps: 20,
+        qrbox: { width: 250, height: 250 },
       };
 
-      // Use standard facingMode (environment / user) for optimal iOS sensor mapping
-      await scanner.start(
-        { facingMode: mode },
-        config,
-        handleScanSuccess,
-        () => {}
-      );
+      await scanner.start(cameraTarget, config, handleScanSuccess, () => {});
 
-      // Enforce iOS inline video playback attributes
+      // Secondary check to ensure video is rendering
       setTimeout(() => {
         const videoEl = document.querySelector<HTMLVideoElement>(`#${qrRegionId} video`);
         if (videoEl) {
-          videoEl.setAttribute('autoplay', 'true');
           videoEl.setAttribute('playsinline', 'true');
           videoEl.setAttribute('webkit-playsinline', 'true');
-          videoEl.setAttribute('muted', 'true');
           videoEl.muted = true;
-          videoEl.style.width = '100%';
-          videoEl.style.height = '100%';
-          videoEl.style.objectFit = 'cover';
-          videoEl.play().catch((e) => console.warn('[Camera] iOS inline play:', e));
+          videoEl.play().catch(() => {});
         }
-      }, 50);
+      }, 100);
 
       setScannerStarted(true);
     } catch (err: any) {
@@ -178,8 +227,8 @@ export const PairingScreen: React.FC = () => {
       const msg = err?.message || 'Unable to open camera';
       setCameraError(
         msg.includes('NotAllowedError') || msg.includes('Permission')
-          ? 'Camera permission denied. Please allow Camera access in iPhone Settings > NoBarier, or enter the 6-digit code manually.'
-          : `Camera could not start (${msg}). Please enter the 6-digit code manually.`
+          ? 'Izin kamera belum aktif. Buka Pengaturan iPhone > NoBarier > Aktifkan Kamera, atau masukkan kode 6-digit secara manual.'
+          : `Kamera tidak dapat dimulai (${msg}). Silakan gunakan tab Kode 6-Digit.`
       );
       setScannerStarted(false);
     }
@@ -299,7 +348,12 @@ export const PairingScreen: React.FC = () => {
       await connectWithCode(code);
     } catch (err: any) {
       setIsConnecting(false);
-      setErrorMessage(err.message || 'Invalid code. Please check and try again.');
+      const msg = err?.message || '';
+      if (msg.includes('Load failed') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setErrorMessage('Gagal terhubung ke jaringan server lokal. Pastikan kedua perangkat terhubung ke Wi-Fi yang sama.');
+      } else {
+        setErrorMessage(msg || 'Kode 6-digit tidak valid atau sudah kadaluarsa.');
+      }
     }
   };
 

@@ -14,7 +14,7 @@ import { sounds } from '../utils/audio';
 import { signaling } from '../services/signaling';
 import { webrtc } from '../services/webrtc';
 import { relay } from '../services/relay';
-import { getApiEndpoint, setTargetServerUrl } from '../utils/api';
+import { getApiEndpoint, setTargetServerUrl, fetchWithFallback, discoverWorkingServer } from '../utils/api';
 import { disconnectNativeWifi } from '../utils/wifi';
 import confetti from 'canvas-confetti';
 
@@ -129,13 +129,15 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Fetch server info on mount
   useEffect(() => {
-    fetch(getApiEndpoint('/api/info'))
+    fetchWithFallback('/api/info')
       .then((res) => res.json())
       .then((data) => {
-        setNetworkInfo({
-          localIp: data.localIp,
-          clientPort: data.clientPort,
-        });
+        if (data && data.localIp) {
+          setNetworkInfo({
+            localIp: data.localIp,
+            clientPort: data.clientPort,
+          });
+        }
       })
       .catch(() => {
         // Fallback
@@ -148,7 +150,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const announce = async () => {
       try {
-        await fetch(getApiEndpoint('/api/discovery/announce'), {
+        await fetchWithFallback('/api/discovery/announce', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -167,7 +169,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     announce();
-    const interval = setInterval(announce, 4000);
+    const interval = setInterval(announce, 3000);
     return () => clearInterval(interval);
   }, [screen, session.sessionId, session.token, session.shortCode, device]);
 
@@ -177,7 +179,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const fetchPeers = async () => {
       try {
-        const res = await fetch(getApiEndpoint(`/api/discovery/peers?excludeId=${session.sessionId || ''}`));
+        const res = await fetchWithFallback(`/api/discovery/peers?excludeId=${session.sessionId || ''}`);
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.peers)) {
@@ -190,7 +192,7 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     fetchPeers();
-    const interval = setInterval(fetchPeers, 3000);
+    const interval = setInterval(fetchPeers, 2500);
     return () => clearInterval(interval);
   }, [screen, session.sessionId]);
 
@@ -599,13 +601,9 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Attempt to register with local server if reachable
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(getApiEndpoint('/api/session/create'), {
+        const res = await fetchWithFallback('/api/session/create', {
           method: 'POST',
-          signal: controller.signal,
         });
-        clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
           sessionData = data;
@@ -671,20 +669,25 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const connectWithCode = useCallback(async (shortCode: string) => {
     try {
       setErrorMessage(null);
-      const res = await fetch(getApiEndpoint('/api/session/lookup'), {
+      const res = await fetchWithFallback('/api/session/lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: shortCode }),
       });
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Pairing code not found');
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Kode pairing 6-digit tidak ditemukan atau sudah kadaluarsa');
       }
       const data = await res.json();
       await connectToSession(data.sessionId, data.token);
     } catch (err: any) {
       sounds.playError();
-      setErrorMessage(err.message || 'Invalid pairing code');
+      const msg = err?.message || '';
+      if (msg.includes('Load failed') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setErrorMessage('Gagal menghubungi server relay. Pastikan kedua HP terhubung ke Wi-Fi / Hotspot yang sama.');
+      } else {
+        setErrorMessage(msg || 'Kode pairing tidak valid atau sudah kadaluarsa');
+      }
     }
   }, [connectToSession]);
 
@@ -692,9 +695,6 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const connectToPeer = useCallback(async (peer: DiscoveredPeer) => {
     try {
       setErrorMessage(null);
-      if (peer.ip) {
-        setTargetServerUrl(`http://${peer.ip}:${peer.port || 3001}`);
-      }
       if (peer.sessionId && peer.token) {
         await connectToSession(peer.sessionId, peer.token);
       } else if (peer.shortCode) {

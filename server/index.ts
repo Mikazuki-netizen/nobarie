@@ -51,6 +51,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Incoming request logging
+app.use((req, _res, next) => {
+  const ip = req.ip?.replace(/^::ffff:/, '') || req.socket.remoteAddress;
+  console.log(`[HTTP ${req.method}] ${req.url} from ${ip}`);
+  next();
+});
+
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', time: Date.now() });
+});
+
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
