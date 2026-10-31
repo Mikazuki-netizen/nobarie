@@ -226,6 +226,12 @@ export class SignalingService {
     }
   }
 
+  disconnectPeer() {
+    this.send({
+      type: 'DISCONNECT_PEER',
+    });
+  }
+
   disconnect() {
     this.stopPing();
     if (this.ws) {

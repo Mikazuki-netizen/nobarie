@@ -141,14 +141,14 @@ export const SettingsScreen: React.FC = () => {
           </button>
         </div>
         <p className="text-xs text-flux-secondary mb-3">
-          Cloudflare Tunnel or LAN server address for QR pairing and transfer.
+          Alamat IP jaringan lokal (Wi-Fi / Hotspot) untuk komunikasi server backend.
         </p>
         <form onSubmit={handleSaveServer} className="flex items-center space-x-2">
           <input
             type="text"
             value={serverUrl}
             onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="https://compared-wrist-pin-repository.trycloudflare.com"
+            placeholder="http://10.0.10.20:3001"
             className="flex-1 py-3 px-3 rounded-xl bg-flux-surface-subtle border border-flux-border text-base font-mono text-flux-primary focus:border-flux-accent focus:outline-none transition-colors"
           />
           <button
@@ -158,10 +158,10 @@ export const SettingsScreen: React.FC = () => {
             {serverSavedSuccess ? (
               <>
                 <Check className="w-4 h-4 text-flux-success" />
-                <span>Saved</span>
+                <span>Tersimpan</span>
               </>
             ) : (
-              <span>Save</span>
+              <span>Simpan</span>
             )}
           </button>
         </form>
@@ -169,14 +169,14 @@ export const SettingsScreen: React.FC = () => {
 
       {/* Transfer Preferences */}
       <div className="p-5 rounded-3xl bg-flux-surface border border-flux-border shadow-subtle mb-6 space-y-4">
-        <h2 className="text-sm font-semibold text-flux-primary mb-2">Preferences</h2>
+        <h2 className="text-sm font-semibold text-flux-primary mb-2">Preferensi</h2>
 
         {/* Auto-Accept Toggle */}
         <div className="flex items-center justify-between">
           <div>
             <div className="text-xs font-semibold text-flux-primary">Auto-accept transfers</div>
             <div className="text-[11px] text-flux-secondary">
-              Automatically receive files without prompt
+              Otomatis menerima file tanpa konfirmasi
             </div>
           </div>
           <button
@@ -196,9 +196,9 @@ export const SettingsScreen: React.FC = () => {
         {/* Prefer Relay Toggle */}
         <div className="flex items-center justify-between pt-3 border-t border-flux-border">
           <div>
-            <div className="text-xs font-semibold text-flux-primary">Force Encrypted Relay</div>
+            <div className="text-xs font-semibold text-flux-primary">Mode Server Lokal (HTTP)</div>
             <div className="text-[11px] text-flux-secondary">
-              Bypass WebRTC P2P and route via server tunnel
+              Gunakan upload/download server lokal langsung
             </div>
           </div>
           <button

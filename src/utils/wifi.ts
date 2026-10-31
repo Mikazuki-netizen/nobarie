@@ -50,7 +50,10 @@ export function generateWifiQrString(ssid: string, password?: string, transferUr
   return `WIFI:T:WPA;S:${ssid};${passPart};${urlPart}`;
 }
 
+let lastJoinedHotspotSsid: string | null = null;
+
 export function joinNativeWifi(ssid: string, password?: string): boolean {
+  lastJoinedHotspotSsid = ssid;
   try {
     const webkit = (window as any).webkit;
     if (webkit && webkit.messageHandlers && webkit.messageHandlers.nativeWifi) {
@@ -64,5 +67,24 @@ export function joinNativeWifi(ssid: string, password?: string): boolean {
   } catch (err) {
     console.warn('[WiFi] native join error:', err);
   }
+  return false;
+}
+
+export function disconnectNativeWifi(ssid?: string): boolean {
+  try {
+    const target = ssid || lastJoinedHotspotSsid || '';
+    const webkit = (window as any).webkit;
+    if (webkit && webkit.messageHandlers && webkit.messageHandlers.nativeWifi) {
+      webkit.messageHandlers.nativeWifi.postMessage({
+        action: 'disconnect',
+        ssid: target,
+      });
+      lastJoinedHotspotSsid = null;
+      return true;
+    }
+  } catch (err) {
+    console.warn('[WiFi] native disconnect error:', err);
+  }
+  lastJoinedHotspotSsid = null;
   return false;
 }

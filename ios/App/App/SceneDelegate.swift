@@ -28,12 +28,23 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
         decisionHandler(.grant)
     }
 
+    private var activeHotspotSsid: String?
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "nativeWifi", let dict = message.body as? [String: Any] else { return }
         
-        if let action = dict["action"] as? String, action == "join", let ssid = dict["ssid"] as? String {
+        let action = dict["action"] as? String ?? ""
+        if action == "join", let ssid = dict["ssid"] as? String {
+            activeHotspotSsid = ssid
             let pass = dict["password"] as? String
             joinHotspot(ssid: ssid, password: pass)
+        } else if action == "disconnect" {
+            let targetSsid = (dict["ssid"] as? String) ?? activeHotspotSsid
+            if let ssid = targetSsid, !ssid.isEmpty {
+                NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
+                print("[NoBarier] Unpaired and disconnected from hotspot: \(ssid)")
+            }
+            activeHotspotSsid = nil
         }
     }
 
@@ -45,7 +56,7 @@ class MainViewController: CAPBridgeViewController, WKUIDelegate, WKScriptMessage
             } else {
                 config = NEHotspotConfiguration(ssid: ssid)
             }
-            config.joinOnce = false
+            config.joinOnce = true
             NEHotspotConfigurationManager.shared.apply(config) { error in
                 if let err = error {
                     print("[NoBarier] Hotspot apply error: \(err.localizedDescription)")

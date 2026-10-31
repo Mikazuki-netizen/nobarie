@@ -564,6 +564,24 @@ wss.on('connection', (ws) => {
           break;
         }
 
+        case 'DISCONNECT_PEER': {
+          if (!boundSessionId) return;
+          const session = sessions.get(boundSessionId);
+          if (session) {
+            const target = boundRole === 'sender' ? session.receiver.ws : session.sender.ws;
+            if (target && target.readyState === WebSocket.OPEN) {
+              target.send(JSON.stringify({
+                type: 'PEER_DISCONNECTED',
+                role: boundRole,
+                reason: 'Transfer complete. Devices unpairing.',
+              }));
+            }
+            shortCodeToSession.delete(session.shortCode);
+            sessions.delete(boundSessionId);
+          }
+          break;
+        }
+
         case 'PING': {
           ws.send(JSON.stringify({ type: 'PONG', timestamp: Date.now() }));
           break;

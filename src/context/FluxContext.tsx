@@ -15,6 +15,7 @@ import { signaling } from '../services/signaling';
 import { webrtc } from '../services/webrtc';
 import { relay } from '../services/relay';
 import { getApiEndpoint, setTargetServerUrl } from '../utils/api';
+import { disconnectNativeWifi } from '../utils/wifi';
 import confetti from 'canvas-confetti';
 
 interface FluxContextType {
@@ -336,11 +337,16 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const onPeerDisconnected = () => {
-      setSession((prev) => ({
-        ...prev,
-        connected: false,
-        peerDevice: null,
-      }));
+      disconnectNativeWifi();
+      webrtc.close();
+      signaling.disconnect();
+      setSession(INITIAL_SESSION);
+      clearSelectedFiles();
+      setIncomingFiles([]);
+      setTransferredFiles([]);
+      setTransferStats(INITIAL_STATS);
+      isTransferringRef.current = false;
+      setScreen('home');
     };
 
     const onOfferFiles = ({ files, senderDevice }: { files: any[]; senderDevice?: DeviceInfo }) => {
@@ -747,13 +753,18 @@ export const FluxProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [session.role]);
 
   const resetTransferState = useCallback(() => {
+    try {
+      signaling.disconnectPeer();
+    } catch {}
+    disconnectNativeWifi();
+    webrtc.close();
+    signaling.disconnect();
     clearSelectedFiles();
     setIncomingFiles([]);
     setTransferredFiles([]);
     setTransferStats(INITIAL_STATS);
     setSession(INITIAL_SESSION);
-    webrtc.close();
-    signaling.disconnect();
+    isTransferringRef.current = false;
     setScreen('home');
   }, [clearSelectedFiles]);
 

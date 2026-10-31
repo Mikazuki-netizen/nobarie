@@ -177,7 +177,15 @@ export const TransferCompleteScreen: React.FC = () => {
         )}
 
         {/* Navigation Action Buttons */}
-        <div className="grid grid-cols-2 gap-3 w-full">
+        <div className="flex flex-col space-y-2.5 w-full">
+          <button
+            onClick={resetTransferState}
+            className="w-full py-3.5 px-4 rounded-2xl bg-flux-primary text-flux-surface hover:bg-flux-accent text-sm font-bold flex items-center justify-center space-x-2 transition-all active:scale-[0.98] shadow-elevated"
+          >
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            <span>Selesai (Putuskan Koneksi)</span>
+          </button>
+
           <button
             onClick={() => {
               if (session.role === 'sender') {
@@ -186,18 +194,10 @@ export const TransferCompleteScreen: React.FC = () => {
                 setScreen('receive');
               }
             }}
-            className="py-3 px-4 rounded-2xl bg-flux-surface-subtle border border-flux-border hover:bg-flux-border text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors active:scale-95"
+            className="w-full py-2.5 px-4 rounded-2xl bg-flux-surface-subtle border border-flux-border hover:bg-flux-border text-flux-secondary hover:text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors active:scale-95"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>Transfer More</span>
-          </button>
-
-          <button
-            onClick={resetTransferState}
-            className="py-3 px-4 rounded-2xl bg-flux-surface-subtle border border-flux-border hover:bg-flux-border text-flux-primary text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors active:scale-95"
-          >
-            <Home className="w-4 h-4" />
-            <span>Return Home</span>
+            <span>Kirim / Terima File Lagi</span>
           </button>
         </div>
       </div>
